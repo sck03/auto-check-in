@@ -1,0 +1,62 @@
+# GitHub 构建与发布
+
+目标仓库：[sck03/auto-check-in](https://github.com/sck03/auto-check-in)。
+
+## 工作流
+
+**Verify**：main 推送、Pull Request 或手动触发。验证 Windows / Linux 的 Go 与前端构建，Linux 运行竞态测试；另外构建实际容器，以非 root、只读根文件系统运行 Chromium 登录/签到/重启持久化测试。
+
+**Release**：推送 `v*` 标签或在 Actions 手动输入版本标签。版本格式如 `v1.0.0`。
+
+产物：
+
+- `AutoCheckIn-版本-windows-amd64.zip`：Windows 桌面版、服务版、文档与依赖许可。
+- `auto-check-in-版本-linux-amd64.tar.gz`：Linux 服务程序。
+- `ghcr.io/sck03/auto-check-in:版本`：linux/amd64 与 linux/arm64 镜像，稳定版同时更新 `latest`。
+- `auto-check-in-版本-docker-linux-amd64.tar.gz`：可用 `docker load` 导入的 Docker 离线成品。
+- `ALL-SHA256SUMS.txt`：以上下载文件的校验和。
+
+只有 Windows 构建和容器验证都通过后才创建 GitHub Release。镜像发布使用工作流自己的 GITHUB_TOKEN，权限仅在发布 job 开放 contents:write / packages:write，不需要在代码中保存令牌。GHCR 首次创建包的可见性受 GitHub 包设置控制；离线镜像附件也可直接下载。
+
+## 触发
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+也可在 [Release 工作流](https://github.com/sck03/auto-check-in/actions/workflows/release.yml) 选择 Run workflow，输入标签。正式更新使用新的版本号；不要覆盖已发布标签。
+
+## 使用成品
+
+```bash
+docker pull ghcr.io/sck03/auto-check-in:1.0.0
+docker run -d --name auto-check-in --restart unless-stopped \
+  -p 127.0.0.1:18990:18990 -v checkin-data:/data \
+  ghcr.io/sck03/auto-check-in:1.0.0
+
+# 离线导入同一成品
+docker load -i auto-check-in-1.0.0-docker-linux-amd64.tar.gz
+```
+
+Windows 解压 ZIP 后运行 AutoCheckIn.exe。发布包未进行代码签名。
+
+## Actions 版本基线
+
+2026-10-15 逐个查询 GitHub `releases/latest`，确认不是 draft/prerelease，再解析标签对应提交。工作流使用完整提交 SHA，注释保留当前最新稳定版本。锁定结果保存在 `.github/action-versions.json`。
+
+| Action | 核对时最新稳定版 |
+| --- | --- |
+| actions/checkout | v7.0.1 |
+| actions/setup-go | v7.0.0 |
+| actions/setup-node | v7.1.0 |
+| actions/upload-artifact | v7.0.2 |
+| actions/download-artifact | v8.0.2 |
+| docker/setup-qemu-action | v4.4.0 |
+| docker/setup-buildx-action | v4.4.1 |
+| docker/login-action | v4.6.0 |
+| docker/metadata-action | v6.2.0 |
+| docker/build-push-action | v7.4.0 |
+| softprops/action-gh-release | v3.0.3 |
+
+构建工具链为 Go 1.27.2、Node 24.18.0 LTS、GoVersionInfo 1.7.0。依赖与 Actions 更新应重新核对稳定发布、更新固定版本/提交并运行验证，不使用漂移的 `@main` 或未经确认的预发布版本。

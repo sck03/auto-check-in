@@ -1,0 +1,15 @@
+{
+  "FixedFileInfo": {
+    "FileFlagsMask": "3f",
+    "FileOS": "040004",
+    "FileType": "01",
+    "FileSubType": "00"
+  },
+  "StringFileInfo": {
+    "FileDescription": "Auto Check-In",
+    "InternalName": "AutoCheckIn",
+    "OriginalFilename": "AutoCheckIn.exe",
+    "ProductName": "Auto Check-In"
+  },
+  "VarFileInfo": { "Translation": { "LangID": "0409", "CharsetID": "04B0" } }
+}

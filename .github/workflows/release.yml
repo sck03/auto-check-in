@@ -1,0 +1,156 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag, for example v1.0.0'
+        required: true
+        default: v1.0.0
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.version.outputs.image }}
+    steps:
+      - id: version
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo 'A semantic version tag is required'; exit 1
+          fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build and verify desktop and service archives
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        shell: pwsh
+        run: ./scripts/build.ps1 -Version $env:RELEASE_VERSION
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-and-server
+          compression-level: 0
+          path: |
+            dist/AutoCheckIn-*-windows-amd64.zip
+            dist/auto-check-in-*-linux-amd64.tar.gz
+            dist/SHA256SUMS.txt
+  docker:
+    needs: version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.version.outputs.image }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      SMOKE_ACCESS_TOKEN: release-local-fixture-token-not-a-production-secret
+      SMOKE_CONTAINER: checkin-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: meta
+        with:
+          images: ${{ needs.version.outputs.image }}
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=raw,value=latest,enable=${{ !contains(needs.version.outputs.version, '-') }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ needs.version.outputs.version }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release
+          provenance: true
+      - name: Verify published image and restart persistence
+        run: |
+          docker pull "$IMAGE:$RELEASE_VERSION"
+          docker run -d --name checkin-release --read-only --tmpfs /tmp:mode=1777,size=268435456 \
+            --shm-size=512m --cap-drop=ALL --security-opt=no-new-privileges:true \
+            --add-host=host.docker.internal:host-gateway -v checkin-release-data:/data \
+            -p 127.0.0.1:18990:18990 -e CHECKIN_ALLOW_HTTP=true \
+            -e CHECKIN_ACCESS_TOKEN="$SMOKE_ACCESS_TOKEN" "$IMAGE:$RELEASE_VERSION"
+          node scripts/container-smoke.mjs
+      - name: Create offline Docker archive
+        run: |
+          mkdir -p dist
+          docker save "$IMAGE:$RELEASE_VERSION" | gzip -1 > "dist/auto-check-in-$RELEASE_VERSION-docker-linux-amd64.tar.gz"
+          cd dist
+          sha256sum *-docker-linux-amd64.tar.gz > DOCKER-SHA256SUMS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: docker-offline
+          compression-level: 0
+          path: |
+            dist/*-docker-linux-amd64.tar.gz
+            dist/DOCKER-SHA256SUMS.txt
+      - if: always()
+        run: |
+          docker logs checkin-release || true
+          docker rm -f checkin-release || true
+  publish:
+    needs: [version, windows, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release
+          merge-multiple: true
+      - name: Merge checksum files
+        run: |
+          cat release/SHA256SUMS.txt release/DOCKER-SHA256SUMS.txt > release/ALL-SHA256SUMS.txt
+          rm release/SHA256SUMS.txt release/DOCKER-SHA256SUMS.txt
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Auto Check-In ${{ needs.version.outputs.version }}
+          prerelease: ${{ contains(needs.version.outputs.version, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: release/*
+          body: |
+            Windows 桌面程序包含系统托盘、开机运行开关和独立管理窗口。
+            Docker 镜像支持 linux/amd64 与 linux/arm64：
+            `docker pull ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}`
+            同时附带 amd64 Docker 离线镜像压缩包，可使用 `docker load` 导入。
+            默认首次签到窗口为北京时间 08:00–09:00，明确临时失败有限补签至 09:30。
+            成品未进行代码签名。详细配置和真实账号验收说明见仓库文档。

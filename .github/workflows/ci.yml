@@ -1,0 +1,67 @@
+name: Verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.2'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - if: runner.os == 'Linux'
+        run: go test -race ./internal/...
+      - if: runner.os == 'Windows'
+        run: go test ./...
+      - run: go vet ./...
+      - run: go build ./cmd/server
+  container:
+    runs-on: ubuntu-latest
+    env:
+      SMOKE_ACCESS_TOKEN: ci-local-fixture-token-not-a-production-secret
+      SMOKE_CONTAINER: checkin-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.18.0'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: auto-check-in:ci
+          cache-from: type=gha,scope=verify
+          cache-to: type=gha,mode=max,scope=verify
+      - name: Run container with restricted runtime settings
+        run: |
+          docker run -d --name checkin-ci --read-only --tmpfs /tmp:mode=1777,size=268435456 \
+            --shm-size=512m --cap-drop=ALL --security-opt=no-new-privileges:true \
+            --add-host=host.docker.internal:host-gateway -v checkin-ci-data:/data \
+            -p 127.0.0.1:18990:18990 -e CHECKIN_ALLOW_HTTP=true \
+            -e CHECKIN_ACCESS_TOKEN="$SMOKE_ACCESS_TOKEN" auto-check-in:ci
+      - run: node scripts/container-smoke.mjs
+      - if: always()
+        run: |
+          docker logs checkin-ci || true
+          docker rm -f checkin-ci || true

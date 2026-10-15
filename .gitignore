@@ -1,0 +1,16 @@
+.research/
+.tools/
+data/
+/dist/
+artifacts/
+web/node_modules/
+web/dist/*
+!web/dist/.keep
+web/test-results/
+web/playwright-report/
+*.exe
+*.syso
+*.test
+coverage.out
+.env
+*.log

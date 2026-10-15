@@ -1,0 +1,204 @@
+import { test, expect, type Page } from '@playwright/test'
+import { createServer } from 'node:http'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const token = 'local-e2e-fixture-token-32-characters-only'
+const auth = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
+let url = '', siteURL = '', directory = '', server: ChildProcess
+let fixture: ReturnType<typeof createServer>
+const checked = new Set<string>()
+const calls = new Map<string, number>()
+let errors: string[] = []
+
+async function api(route: string, method = 'GET', data?: unknown) {
+  const response = await fetch(url + '/api/v1' + route, { method, headers: auth, body: data === undefined ? undefined : JSON.stringify(data) })
+  if (!response.ok) throw new Error(await response.text())
+  return response.status === 204 ? null : response.json()
+}
+async function start() {
+  checked.clear(); calls.clear(); errors = []
+  fixture = createServer(async (req, res) => {
+    const route = new URL(req.url || '/', 'http://fixture').pathname
+    const send = (data: unknown, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)) }
+    if (route === '/' || route === '/login') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(fixtureHTML); return
+    }
+    if (route === '/api/user/login') {
+      let raw = ''; for await (const chunk of req) raw += chunk
+      const data = JSON.parse(raw)
+      if (data.password !== 'fixture-password') { send({ success: false }); return }
+      res.setHeader('Set-Cookie', 'session=' + data.username + '; HttpOnly; Path=/; SameSite=Lax')
+      send({ success: true, data: { id: data.username, checked_in: false } }); return
+    }
+    const name = /(?:^|;\s*)session=([^;]+)/.exec(req.headers.cookie || '')?.[1]
+    if (!name || req.headers['new-api-user'] !== name) { send({ success: false }, 401); return }
+    if (route === '/api/user/self') { send({ success: true, data: { id: name, quota: checked.has(name) ? 750000 : 500000 } }); return }
+    if (route === '/api/user/checkin') {
+      if (req.method === 'GET') { send({ success: true, data: { stats: { checked_in_today: checked.has(name) } } }); return }
+      calls.set(name, (calls.get(name) || 0) + 1)
+      if (checked.has(name)) { send({ success: false, message: '今日已签到' }); return }
+      checked.add(name); send({ success: true, message: '签到成功', data: { quota_awarded: 250000 } }); return
+    }
+    send({ success: false }, 404)
+  })
+  await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve))
+  const address = fixture.address() as { port: number }
+  siteURL = 'http://127.0.0.1:' + address.port
+  await mkdir(path.join(root, 'artifacts'), { recursive: true })
+  directory = await mkdtemp(path.join(root, 'artifacts', 'e2e-'))
+  const executable = path.join(root, 'dist', process.platform === 'win32' ? 'checkin-server.exe' : 'checkin-server')
+  server = spawn(executable, ['-listen', '127.0.0.1:0', '-data', directory], {
+    env: { ...process.env, CHECKIN_ACCESS_TOKEN: token, CHECKIN_ALLOW_HTTP: 'true' },
+    windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let log = ''
+  server.stdout?.on('data', data => log += data.toString())
+  server.stderr?.on('data', data => log += data.toString())
+  server.on('error', e => { log += String(e) })
+  for (let i = 0; i < 150; i++) {
+    try { url = JSON.parse(await readFile(path.join(directory, 'endpoint.json'), 'utf8')).url; break }
+    catch { await new Promise(resolve => setTimeout(resolve, 100)) }
+  }
+  if (!url) throw new Error('server failed: ' + log)
+  const settings = await api('/settings')
+  await api('/settings', 'PUT', { ...settings, scheduler_enabled: false, site_gap_seconds: 0 })
+  return () => writeFile(path.join(directory, 'server.log'), log)
+}
+let saveLog: () => Promise<void>
+test.beforeEach(async ({ page }) => {
+  url = ''
+  saveLog = await start()
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto(url + '/#token=' + token)
+  await expect(page.getByRole('heading', { name: '我的账号' })).toBeVisible()
+})
+test.afterEach(async () => {
+  await saveLog?.()
+  server?.kill()
+  await new Promise<void>(resolve => fixture?.close(() => resolve()))
+})
+async function seedSite() {
+  const templates = await api('/templates')
+  return api('/sites', 'POST', { ...templates.find((t: any) => t.id === 'newapi').site, id: '', name: '本地测试站', base_url: siteURL })
+}
+async function seedAccount(name: string, withSession = true) {
+  const site = await seedSite()
+  const templates = await api('/templates')
+  return api('/accounts', 'POST', {
+    name, site_id: site.id, enabled: true, version: 0, schedule: templates[0].schedule,
+    credentials: { method: 'cookie', ...(withSession ? { api_user: name, cookie_header: 'session=' + name } : {}) },
+  })
+}
+async function selectNav(page: Page, label: string) { await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: label }).click() }
+
+test('站点和账号管理、签到结果、每日防重复、编辑保留凭据', async ({ page }) => {
+  await selectNav(page, '站点管理')
+  await page.getByRole('button', { name: '添加站点', exact: true }).click()
+  await page.getByLabel('站点名称', { exact: true }).fill('本地测试站')
+  await page.getByLabel('站点地址', { exact: true }).fill(siteURL)
+  await page.getByRole('button', { name: '保存站点' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '本地测试站' })).toBeVisible()
+  await selectNav(page, '账号签到')
+  await page.getByRole('button', { name: '添加账号', exact: true }).click()
+  await page.getByLabel('账号名称', { exact: true }).fill('演示账号')
+  await page.getByLabel('所属站点').selectOption({ label: '本地测试站' })
+  await page.getByLabel(/^Cookie/).fill('session=alice')
+  await page.getByLabel(/^API 用户 ID/).fill('alice')
+  await expect(page.getByLabel('随机窗口开始')).toHaveValue('08:00')
+  await expect(page.getByLabel('随机窗口结束')).toHaveValue('09:00')
+  await expect(page.getByLabel('失败补签截止')).toHaveValue('09:30')
+  await page.getByRole('button', { name: '保存账号' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '签到 演示账号', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '签到 演示账号', exact: true }).click()
+  await expect(page.getByText('已完成', { exact: true })).toBeVisible()
+  expect(calls.get('alice')).toBe(1)
+  const accounts = await api('/accounts')
+  const duplicate = await api('/runs', 'POST', { account_ids: [accounts[0].id], retry: true })
+  expect(duplicate[0].accepted).toBe(false)
+  expect(calls.get('alice')).toBe(1)
+  await page.screenshot({ path: path.join(root, 'artifacts/ui-desktop.png'), fullPage: true })
+  await page.getByRole('button', { name: '编辑 演示账号', exact: true }).click()
+  await expect(page.getByLabel(/^Cookie/)).toHaveValue('')
+  await page.getByLabel('账号名称', { exact: true }).fill('重命名账号')
+  await page.getByRole('button', { name: '保存账号' }).click()
+  await expect(page.getByRole('button', { name: '编辑 重命名账号', exact: true })).toBeVisible()
+  expect((await api('/accounts'))[0].auth.has_session).toBe(true)
+  await selectNav(page, '执行记录')
+  await expect(page.getByText('$0.5', { exact: true })).toBeVisible()
+  await page.screenshot({ path: path.join(root, 'artifacts/ui-history.png'), fullPage: true })
+  await selectNav(page, '账号签到')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: path.join(root, 'artifacts/ui-mobile.png'), fullPage: true })
+  expect(errors).toEqual([])
+})
+
+test('人工浏览器登录并保存独立会话', async ({ page }) => {
+  await page.route('**/api/v1/sessions/*/input', async route => {
+    const input = route.request().postDataJSON()
+    if (input.type === 'text' && input.text === 'login-user') await new Promise(resolve => setTimeout(resolve, 600))
+    await route.continue()
+  })
+  const account = await seedAccount('login-user', false)
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await expect(page.getByRole('button', { name: '浏览器登录 login-user' })).toBeVisible()
+  await page.getByRole('button', { name: '浏览器登录 login-user' }).click()
+  const screenshot = page.getByAltText('独立登录浏览器，可点击页面进行操作')
+  await expect(screenshot).toBeVisible()
+  const bounds = await screenshot.boundingBox()
+  if (!bounds) throw new Error('missing browser viewport')
+  // Fixture input has explicit coordinates in its own 1200px viewport.
+  await screenshot.click({ position: { x: 100 * bounds.width / 1200, y: 135 * bounds.width / 1200 } })
+  await page.getByLabel('向选中的网页输入框填写文字').fill('login-user')
+  await page.getByRole('button', { name: '输入', exact: true }).click()
+  await page.getByRole('button', { name: '下一输入框' }).click()
+  await page.getByLabel('向选中的网页输入框填写文字').fill('fixture-password')
+  await page.getByRole('button', { name: '输入', exact: true }).click()
+  await page.getByRole('button', { name: '回车', exact: true }).click()
+  await page.screenshot({ path: path.join(root, 'artifacts/ui-browser-login.png'), fullPage: true })
+  await page.getByRole('button', { name: '保存会话', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  const saved = (await api('/accounts')).find((a: any) => a.id === account.id)
+  expect(saved.auth.has_session).toBe(true)
+  expect(saved.auth.api_user).toBe('login-user')
+  await page.getByRole('button', { name: '签到 login-user', exact: true }).click()
+  await expect(page.getByText('已完成', { exact: true })).toBeVisible()
+  expect(calls.get('login-user')).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('访问保护、加密备份和空白实例恢复', async ({ page }) => {
+  await seedAccount('backup-user')
+  const denied = await fetch(url + '/api/v1/accounts')
+  expect(denied.status).toBe(401)
+  const crossOrigin = await fetch(url + '/api/v1/accounts', { headers: { ...auth, Origin: 'https://untrusted.invalid' } })
+  expect(crossOrigin.status).toBe(403)
+  const visible = JSON.stringify(await api('/accounts'))
+  expect(visible).not.toContain('session=backup-user')
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await selectNav(page, '设置')
+  await page.getByLabel('备份口令').fill('e2e-long-backup-password')
+  const downloading = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出加密备份' }).click()
+  const downloaded = await downloading
+  const file = await downloaded.path()
+  if (!file) throw new Error('backup not downloaded')
+  const archive = await readFile(file)
+  expect(archive.toString()).not.toContain('backup-user')
+  const all = await api('/accounts')
+  await api('/accounts/' + all[0].id, 'DELETE')
+  await api('/backup/restore', 'POST', { password: 'e2e-long-backup-password', archive: archive.toString('base64') })
+  expect((await api('/accounts'))[0].auth.has_session).toBe(true)
+  expect((await api('/settings')).scheduler_enabled).toBe(false)
+  expect(errors).toEqual([])
+})
+
+const fixtureHTML = `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>测试登录页</title>
+<style>body{margin:40px;font:18px sans-serif;background:#f4f8f6}h1{color:#297860;font-size:28px}input{position:absolute;left:60px;width:320px;height:38px;padding:4px;font:18px sans-serif}input[name=username]{top:115px}input[name=password]{top:175px}button{position:absolute;top:235px;left:60px;padding:10px 25px}#message{position:absolute;top:300px}</style>
+<h1>本地模拟站点</h1><form><input name="username" placeholder="用户名"><input name="password" type="password" placeholder="密码"><button type="submit">登录</button></form><p id="message"></p>
+<script>document.querySelector('form').onsubmit=async e=>{e.preventDefault();const r=await fetch('/api/user/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.querySelector('[name=username]').value,password:document.querySelector('[name=password]').value})});const d=await r.json();if(d.success){localStorage.setItem('user',JSON.stringify(d.data));document.querySelector('#message').textContent='登录成功，返回工具保存会话';}else document.querySelector('#message').textContent='登录失败';};</script></html>`
