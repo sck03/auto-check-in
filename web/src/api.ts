@@ -1,7 +1,9 @@
 let accessToken = ''
 let desktopMode = false
 export const isDesktop = () => desktopMode
-export function setDesktopMode(value: boolean) { desktopMode = value }
+export function setDesktopMode(value: boolean) {
+  desktopMode = value
+}
 
 export class ApiError extends Error {
   constructor(
@@ -24,9 +26,19 @@ export async function initializeConnection() {
   } else accessToken = sessionStorage.getItem('checkin.access') || ''
   return Boolean(accessToken)
 }
-async function response(path: string, method = 'GET', body?: unknown) {
+interface RequestOptions {
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+async function response<T>(
+  path: string,
+  method: string,
+  body: unknown,
+  options: RequestOptions,
+  read: (res: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController()
-  const timer = window.setTimeout(() => controller.abort(), 75000)
+  const timer = window.setTimeout(() => controller.abort(), options.timeoutMs ?? 75000)
   try {
     const headers: Record<string, string> = { Authorization: 'Bearer ' + accessToken }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -34,26 +46,40 @@ async function response(path: string, method = 'GET', body?: unknown) {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
+      signal: options.signal
+        ? AbortSignal.any([controller.signal, options.signal])
+        : controller.signal,
     })
     if (!res.ok) {
       const payload = await res.json().catch(() => null)
       throw new ApiError(payload?.error?.message || '服务暂时无法处理请求', res.status)
     }
-    return res
+    return await read(res)
   } catch (error) {
+    if (options.signal?.aborted) throw error
     if (error instanceof ApiError) throw error
     throw new Error('连接已中断或请求超时，请确认程序仍在运行')
   } finally {
     clearTimeout(timer)
   }
 }
-export async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const res = await response(path, method, body)
-  return res.status === 204 ? (undefined as T) : await res.json()
+export function request<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  options: RequestOptions = {},
+): Promise<T> {
+  return response(path, method, body, options, async (res) =>
+    res.status === 204 ? (undefined as T) : res.json(),
+  )
 }
-export async function blob(path: string, method = 'GET', body?: unknown): Promise<Blob> {
-  return (await response(path, method, body)).blob()
+export function blob(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  options: RequestOptions = {},
+): Promise<Blob> {
+  return response(path, method, body, options, (res) => res.blob())
 }
 export async function base64(data: Blob): Promise<string> {
   return new Promise((resolve, reject) => {

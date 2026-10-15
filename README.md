@@ -2,9 +2,9 @@
 
 一个面向个人使用的多站点、多账号自动签到工具。Go 核心、Vue 3 界面、SQLite 存储；Windows 独立应用窗口和 Docker 网页共用一套业务逻辑。
 
-**v1.0.0 成品：** [Windows 下载](https://github.com/sck03/auto-check-in/releases/download/v1.0.0/AutoCheckIn-1.0.0-windows-amd64.zip) · [Docker 离线镜像](https://github.com/sck03/auto-check-in/releases/download/v1.0.0/auto-check-in-1.0.0-docker-linux-amd64.tar.gz) · [全部产物与校验和](https://github.com/sck03/auto-check-in/releases/tag/v1.0.0)
+**v1.0.2 成品：** [Windows 下载](https://github.com/sck03/auto-check-in/releases/download/v1.0.2/AutoCheckIn-1.0.2-windows-amd64.zip) · [Docker 离线镜像](https://github.com/sck03/auto-check-in/releases/download/v1.0.2/auto-check-in-1.0.2-docker-linux-amd64.tar.gz) · [全部产物与校验和](https://github.com/sck03/auto-check-in/releases/tag/v1.0.2)
 
-镜像：`docker pull ghcr.io/sck03/auto-check-in:1.0.0`（linux/amd64、linux/arm64，已验证匿名拉取）。
+镜像：`docker pull ghcr.io/sck03/auto-check-in:1.0.2`（linux/amd64、linux/arm64）。
 
 ## 已实现
 
@@ -12,7 +12,7 @@
 - 北京时间 **08:00–09:00** 按账号分别随机首次执行，**每天确认成功一次**。
 - 明确的临时故障默认最多重试 2 次，约等待 5 / 15 分钟并随机延后 0–30 秒；补签默认截止 **09:30**。
 - 验证码、登录失效与结果不明分别处理；New API 支持只读签到状态复核。
-- 浏览器登录窗口，可完成人工登录、授权与验证码，再保存账号独立会话。
+- Windows 独立浏览器登录窗口，可直接输入、授权和处理验证码；网页预览支持直接输入与 OAuth 新页面跟随，再保存账号独立会话。
 - AES-256-GCM 凭据存储、口令加密备份、持久任务队列、异常退出恢复和历史记录。
 - Windows 托盘、最小化到托盘、关闭窗口后继续运行、登录 Windows 后自动启动及托盘右键菜单。
 - 单个后台浏览器进程、最多两个隔离会话、空闲 60 秒释放；隐藏界面停止轮询。

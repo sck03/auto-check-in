@@ -31,10 +31,32 @@ jobs:
         working-directory: web
       - if: runner.os == 'Linux'
         run: go test -race ./internal/...
+        env:
+          CHECKIN_BROWSER_TEST: '1'
+          CHECKIN_BROWSER_NO_SANDBOX: 'true'
       - if: runner.os == 'Windows'
         run: go test ./...
+        env:
+          CHECKIN_BROWSER_TEST: '1'
       - run: go vet ./...
-      - run: go build ./cmd/server
+      - name: Build service for UI regression tests
+        shell: pwsh
+        run: |
+          $binary = if ($IsWindows) { 'dist/checkin-server.exe' } else { 'dist/checkin-server' }
+          go build -o $binary ./cmd/server
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $browser = if ($IsWindows) { 'C:/Program Files/Google/Chrome/Application/chrome.exe' } else { (Get-Command google-chrome).Source }
+          if (-not (Test-Path -LiteralPath $browser)) { throw 'Chromium browser not found on runner' }
+          "CHECKIN_TEST_BROWSER_PATH=$browser" >> $env:GITHUB_ENV
+      - run: npm run test:e2e
+        working-directory: web
+        env:
+          CHECKIN_BROWSER_NO_SANDBOX: 'true'
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: regression-failures-${{ runner.os }}
+          path: web/test-results
   container:
     runs-on: ubuntu-26.04
     env:

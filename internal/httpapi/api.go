@@ -306,7 +306,7 @@ func (a *API) routes() {
 			fail(w, e)
 			return
 		}
-		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Type", "image/jpeg")
 		_, _ = w.Write(image)
 	})
 	m.HandleFunc("POST /api/v1/sessions/{id}/input", func(w http.ResponseWriter, r *http.Request) {

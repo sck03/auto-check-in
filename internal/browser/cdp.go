@@ -3,6 +3,9 @@ package browser
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -13,8 +16,31 @@ type cdpActionFunc func(context.Context) error
 func native(action chromedp.Action[chromedp.Void]) cdpActionFunc {
 	return func(ctx context.Context) error { return chromedp.Do(ctx, action) }
 }
-func cdpNavigate(url string) cdpActionFunc       { return native(chromedp.Navigate(url)) }
-func cdpReload() cdpActionFunc                   { return native(chromedp.Reload()) }
+func cdpNavigate(url string) cdpActionFunc { return native(chromedp.Navigate(url)) }
+func cdpReload() cdpActionFunc {
+	return func(ctx context.Context) error {
+		_, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.Reload, page.ReloadParams{})
+		return err
+	}
+}
+func cdpNavigateAsync(url string) cdpActionFunc {
+	return func(ctx context.Context) error {
+		result, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.Navigate, page.NavigateParams{URL: url})
+		if err == nil && result.ErrorText != "" {
+			return fmt.Errorf("navigation failed: %s", result.ErrorText)
+		}
+		return err
+	}
+}
+func cdpNavigateDOMReady(url string) cdpActionFunc {
+	return func(ctx context.Context) error {
+		_, err := chromedp.Run(ctx, chromedp.WaitEvent(page.DomContentEventFired, nil,
+			chromedp.Func(func(ctx context.Context, _ *chromedp.Target) error {
+				return cdpNavigateAsync(url)(ctx)
+			})))
+		return err
+	}
+}
 func cdpMouseClickXY(x, y float64) cdpActionFunc { return native(chromedp.MouseClickXY(x, y)) }
 func cdpKeyEvent(key string, opts ...chromedp.KeyOption) cdpActionFunc {
 	return native(chromedp.KeyEvent(key, opts...))
@@ -45,8 +71,12 @@ func cdpPoll(expr string, out any, opts ...chromedp.PollOption) cdpActionFunc {
 }
 func cdpCaptureScreenshot(out *[]byte) cdpActionFunc {
 	return func(ctx context.Context) error {
-		var err error
-		*out, err = chromedp.Run(ctx, chromedp.CaptureScreenshot())
+		quality, yes, no := int64(80), true, false
+		result, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.CaptureScreenshot, page.CaptureScreenshotParams{
+			Format: page.CaptureScreenshotFormatJpeg, Quality: &quality,
+			FromSurface: &yes, CaptureBeyondViewport: &no, OptimizeForSpeed: &yes,
+		})
+		*out = result.Data
 		return err
 	}
 }

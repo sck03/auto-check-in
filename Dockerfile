@@ -15,7 +15,7 @@ COPY --from=frontend /source/web/node_modules ./web/node_modules
 COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=1.0.1
+ARG VERSION=1.0.2
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X auto-check-in/internal/buildinfo.Version=$VERSION" -o /out/checkin-server ./cmd/server
 RUN node scripts/licenses.mjs --out /source/dist/THIRD_PARTY_NOTICES.md

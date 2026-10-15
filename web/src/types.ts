@@ -134,6 +134,7 @@ export interface LoginInfo {
   expires_at: string
   width: number
   height: number
+  native_window?: boolean
 }
 export interface EnqueueResult {
   account_id: string

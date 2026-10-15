@@ -22,6 +22,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/storage"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"golang.org/x/net/publicsuffix"
 )
@@ -29,20 +30,23 @@ import (
 type Config struct {
 	Executable, TempDir, ProxyURL string
 	NoSandbox                     bool
+	InteractiveVisible            bool
 	IdleTimeout                   time.Duration
 }
 type Factory struct {
-	config              Config
-	slots               chan struct{}
-	poolMu              sync.Mutex
-	poolCtx             context.Context
-	poolCancel          context.CancelFunc
-	poolAllocatorCancel context.CancelFunc
-	poolProfile         string
-	active              int
-	starts              int
-	idle                *time.Timer
-	closed              bool
+	config    Config
+	slots     chan struct{}
+	lifetime  context.Context
+	shutdown  context.CancelFunc
+	poolMu    sync.Mutex
+	teardowns sync.WaitGroup
+	pool      *browserProcess
+	starting  chan struct{}
+	active    int
+	starts    int
+	idle      *time.Timer
+	closed    bool
+	visible   map[*Session]struct{}
 }
 
 func New(config Config) *Factory {
@@ -52,7 +56,8 @@ func New(config Config) *Factory {
 	if config.IdleTimeout <= 0 {
 		config.IdleTimeout = 60 * time.Second
 	}
-	return &Factory{config: config, slots: make(chan struct{}, 2)}
+	lifetime, shutdown := context.WithCancel(context.Background())
+	return &Factory{config: config, slots: make(chan struct{}, 2), lifetime: lifetime, shutdown: shutdown, visible: make(map[*Session]struct{})}
 }
 func (f *Factory) Available() bool {
 	if f.config.Executable == "" {
@@ -89,6 +94,12 @@ type Session struct {
 	cleanup        func()
 	closeOnce      sync.Once
 	mu             sync.Mutex
+	inputMu        sync.Mutex
+	tabMu          sync.RWMutex
+	tabs           map[target.ID]*sessionTab
+	tabOrder       []target.ID
+	activeTab      target.ID
+	nativeWindow   bool
 	site           domain.Site
 	creds          domain.Credentials
 	loginResponses chan port.Response
@@ -101,6 +112,9 @@ func (f *Factory) OpenInteractive(ctx context.Context, site domain.Site, c domai
 	return f.open(ctx, site, c, true)
 }
 func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentials, interactive bool) (*Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !f.Available() {
 		return nil, port.ErrBrowserUnavailable
 	}
@@ -115,23 +129,24 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 		case f.slots <- struct{}{}:
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-f.lifetime.Done():
+			return nil, f.lifetime.Err()
 		}
 	}
-	root, err := f.acquirePool()
+	s, err := f.allocateSession(ctx, site, c, interactive && f.config.InteractiveVisible)
 	if err != nil {
 		<-f.slots
 		return nil, err
 	}
-	browserCtx, cancel := chromedp.NewContext(root, chromedp.WithNewBrowserContext())
-	stop := context.AfterFunc(ctx, cancel)
-	s := &Session{ctx: browserCtx, cancel: func() { stop(); cancel() }, site: site, creds: c, loginResponses: make(chan port.Response, 8)}
-	s.cleanup = func() { f.releasePool(); <-f.slots }
+	initTimer := time.AfterFunc(30*time.Second, s.cancel)
 	err = chromedp.Do(s.ctx)
+	initTimer.Stop()
 	if err != nil {
 		s.Close()
 		return nil, err
 	}
-	s.listenLoginResponses()
+	s.trackTabs()
+	s.listenLoginResponses(s.ctx)
 	openCtx, openCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer openCancel()
 	err = s.run(openCtx, cdpActionFunc(func(ctx context.Context) error {
@@ -142,23 +157,52 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 		s.Close()
 		return nil, err
 	}
-	if err = s.restore(openCtx); err != nil {
+	restored, err := s.restore(openCtx)
+	if err != nil {
 		s.Close()
 		return nil, err
 	}
-	if err = s.run(openCtx, cdpNavigate(site.BaseURL+site.LoginPath)); err != nil {
+	navigate := cdpNavigate(site.BaseURL + site.LoginPath)
+	if interactive {
+		// Let the user interact while slow third-party assets are still loading.
+		navigate = cdpNavigateAsync(site.BaseURL + site.LoginPath)
+		if restored != "" {
+			navigate = cdpNavigateDOMReady(site.BaseURL + site.LoginPath)
+		}
+	}
+	if err = s.run(openCtx, navigate); err != nil {
 		s.Close()
 		return nil, err
+	}
+	if restored != "" {
+		// Seed the first document only. Replaying storage on reload can undo a
+		// completed login or resurrect the user that a logout just removed.
+		if err = s.run(openCtx, func(ctx context.Context) error {
+			_, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.RemoveScriptToEvaluateOnNewDocument, page.RemoveScriptToEvaluateOnNewDocumentParams{Identifier: restored})
+			return err
+		}); err != nil {
+			s.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }
 
 func (s *Session) run(ctx context.Context, actions ...cdpActionFunc) error {
-	op, cancel := context.WithCancel(s.ctx)
+	return s.runOn(s.activeContext(), ctx, actions...)
+}
+func (s *Session) runOn(tab, ctx context.Context, actions ...cdpActionFunc) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	op, cancel := context.WithCancel(tab)
 	stop := context.AfterFunc(ctx, cancel)
 	defer cancel()
 	defer stop()
 	for _, action := range actions {
+		if err := op.Err(); err != nil {
+			return err
+		}
 		if err := action(op); err != nil {
 			return err
 		}
@@ -186,7 +230,7 @@ func (s *Session) allowedDomain(domainName string) bool {
 	}
 	return false
 }
-func (s *Session) restore(ctx context.Context) error {
+func (s *Session) restore(ctx context.Context) (page.ScriptIdentifier, error) {
 	cookies := []*network.CookieParam{}
 	u, _ := url.Parse(s.site.BaseURL)
 	add := func(c domain.Cookie) {
@@ -221,24 +265,25 @@ func (s *Session) restore(ctx context.Context) error {
 			_, e := cdp.Call(ctx, chromedp.FromContext(ctx).Target, network.SetCookies, network.SetCookiesParams{Cookies: cookies})
 			return e
 		})); err != nil {
-			return err
+			return "", err
 		}
 	}
-	state := map[string]map[string]string{}
-	for origin, values := range s.creds.Storage {
-		if origin == s.site.BaseURL {
-			state[origin] = values
-		}
+	values := s.creds.Storage[s.site.BaseURL]
+	if len(values) == 0 {
+		return "", nil
 	}
-	script := "(()=>{const state=" + jsonJS(state) + "; const values=state[location.origin]; if(values){for(const [key,value] of Object.entries(values)){localStorage.setItem(key,value)}}})()"
-	return s.run(ctx, cdpActionFunc(func(ctx context.Context) error {
-		_, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: script})
+	script := "(()=>{if(location.origin!==" + jsonJS(s.site.BaseURL) + ")return;for(const [key,value] of Object.entries(" + jsonJS(values) + ")){localStorage.setItem(key,value)}})()"
+	var id page.ScriptIdentifier
+	err := s.run(ctx, cdpActionFunc(func(ctx context.Context) error {
+		result, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.AddScriptToEvaluateOnNewDocument, page.AddScriptToEvaluateOnNewDocumentParams{Source: script})
+		id = result.Identifier
 		return err
 	}))
+	return id, err
 }
 
-func (s *Session) listenLoginResponses() {
-	events := chromedp.Events(s.ctx, network.ResponseReceived)
+func (s *Session) listenLoginResponses(tab context.Context) {
+	events := chromedp.Events(tab, network.ResponseReceived)
 	go func() {
 		for ev, err := range events {
 			if err != nil {
@@ -246,7 +291,7 @@ func (s *Session) listenLoginResponses() {
 			}
 			u, err := url.Parse(ev.Response.URL)
 			if err != nil {
-				return
+				continue
 			}
 			base, _ := url.Parse(s.site.BaseURL)
 			if u.Scheme != base.Scheme || u.Host != base.Host {
@@ -256,13 +301,13 @@ func (s *Session) listenLoginResponses() {
 				continue
 			}
 			go func(id network.RequestID, status int) {
-				ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+				ctx, cancel := context.WithTimeout(tab, 5*time.Second)
 				defer cancel()
 				// ResponseReceived precedes body completion. Retry this read-only
 				// CDP operation until the body is available; never resend login.
 				for ctx.Err() == nil {
 					var body []byte
-					err := s.run(ctx, cdpActionFunc(func(ctx context.Context) error {
+					err := s.runOn(tab, ctx, cdpActionFunc(func(ctx context.Context) error {
 						r, e := cdp.Call(ctx, chromedp.FromContext(ctx).Target, network.GetResponseBody, network.GetResponseBodyParams{RequestID: id})
 						body = r.Body
 						return e
@@ -315,7 +360,7 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 		Body   string `json:"body"`
 		Retry  int    `json:"retry"`
 	}
-	err := s.run(ctx, cdpEvaluate(expression, &value, chromedp.EvalAwaitPromise))
+	err := s.runSite(ctx, cdpEvaluate(expression, &value, chromedp.EvalAwaitPromise))
 	if err != nil {
 		if method != "GET" {
 			return out, port.ErrUncertain
@@ -337,7 +382,7 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 func (s *Session) refreshUserID(ctx context.Context) error {
 	var id string
 	expr := "(()=>{if(location.origin!==" + jsonJS(s.site.BaseURL) + ")return '';try{const u=JSON.parse(localStorage.getItem('user')||'{}');return u.id==null?'':String(u.id)}catch{return ''}})()"
-	err := s.run(ctx, cdpEvaluate(expr, &id))
+	err := s.runSite(ctx, cdpEvaluate(expr, &id))
 	if err == nil && id != "" {
 		s.creds.APIUser = id
 	}
@@ -348,9 +393,9 @@ func (s *Session) Snapshot(ctx context.Context) (domain.Credentials, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var cookies []*network.Cookie
-	if err := s.run(ctx, cdpActionFunc(func(ctx context.Context) error {
-		current := chromedp.FromContext(ctx)
-		r, e := cdp.Call(ctx, current.Browser, storage.GetCookies, storage.GetCookiesParams{BrowserContextID: current.BrowserContextID})
+	if err := s.runOn(s.ctx, ctx, cdpActionFunc(func(ctx context.Context) error {
+		owner := chromedp.FromContext(s.ctx)
+		r, e := cdp.Call(ctx, owner.Browser, storage.GetCookies, storage.GetCookiesParams{BrowserContextID: owner.BrowserContextID})
 		cookies = r.Cookies
 		return e
 	})); err != nil {
@@ -367,7 +412,7 @@ func (s *Session) Snapshot(ctx context.Context) (domain.Credentials, error) {
 	}
 	state := map[string]string{}
 	expr := "(()=>{if(location.origin!==" + jsonJS(s.site.BaseURL) + ")return {};return Object.fromEntries(Object.entries(localStorage))})()"
-	if err := s.run(ctx, cdpEvaluate(expr, &state)); err != nil {
+	if err := s.runSite(ctx, cdpEvaluate(expr, &state)); err != nil {
 		return c, err
 	}
 	c.Storage = map[string]map[string]string{s.site.BaseURL: state}

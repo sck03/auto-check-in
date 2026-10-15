@@ -3,6 +3,7 @@
 The Go and Vue implementation in this project is independently authored. No code or UI assets from Fl API Hub are included. Its architecture and product requirements were reviewed as design references:
 
 - RebornQ/fl_api_hub, AGPL-3.0, revision 94ef25b0381d54ab11d1631d569a5cca4451eb84.
+- QuantumNous/new-api, AGPL-3.0, revision 19d435e7fdfdaa2b9a734a76393f112cf980b815. OAuth and authentication protocols were reviewed for interoperability; no implementation or UI assets are included.
 - suainam/anyrouter-autolog, BSD-2-Clause, revision 687aa92944d19e83bc9c1cc25e0b544b4fa19525.
 - millylee/anyrouter-check-in, BSD-2-Clause, revision 3b16662142c68703ea3e79c77c06a8cf6bba7990.
 

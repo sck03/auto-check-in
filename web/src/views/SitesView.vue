@@ -11,7 +11,13 @@ const form = ref<Site | null>(null),
   busy = ref(false),
   error = ref('')
 const deleting = ref<Site | null>(null)
-const count = (id: string) => props.accounts.filter((a) => a.site_id === id).length
+const accountCounts = computed(() => {
+  const counts = new Map<string, number>()
+  for (const account of props.accounts)
+    counts.set(account.site_id, (counts.get(account.site_id) || 0) + 1)
+  return counts
+})
+const count = (id: string) => accountCounts.value.get(id) || 0
 const attached = computed(() => (form.value && !isNew.value ? count(form.value.id) : 0))
 const labels: Record<string, string> = {
   anyrouter: 'Any Router',

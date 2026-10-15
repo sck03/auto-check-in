@@ -139,7 +139,9 @@ async function save() {
         /></label>
       </template>
       <p v-if="form.method === 'github' || form.method === 'linuxdo'" class="field-help">
-        保存后点击账号的“浏览器登录”，在独立会话中登录并授权。以后自动复用该账号的授权会话。
+        保存后点击“浏览器登录”，在独立会话中选择
+        {{ form.method === 'github' ? 'GitHub' : 'LinuxDo' }} 完成授权。以后按此方式自动登录；
+        无需提前在平时使用的浏览器中登录。
       </p>
       <details class="advanced">
         <summary>更多凭据选项</summary>

@@ -6,7 +6,7 @@
 
 **Verify**：main 推送、Pull Request 或手动触发。验证 Windows / Linux 的 Go 与前端构建，Linux 运行竞态测试；另外构建实际容器，以非 root、只读根文件系统运行 Chromium 登录/签到/重启持久化测试。
 
-**Release**：推送 `v*` 标签或在 Actions 手动输入版本标签。版本格式如 `v1.0.1`。
+**Release**：推送 `v*` 标签或在 Actions 手动输入版本标签。版本格式如 `v1.0.2`。
 
 产物：
 
@@ -27,8 +27,8 @@ Docker 内的应用声明也合并为 `/usr/share/doc/auto-check-in/THIRD_PARTY_
 ## 触发
 
 ```bash
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 也可在 [Release 工作流](https://github.com/sck03/auto-check-in/actions/workflows/release.yml) 选择 Run workflow，输入标签。正式更新使用新的版本号；不要覆盖已发布标签。
@@ -36,13 +36,13 @@ git push origin v1.0.1
 ## 使用成品
 
 ```bash
-docker pull ghcr.io/sck03/auto-check-in:1.0.1
+docker pull ghcr.io/sck03/auto-check-in:1.0.2
 docker run -d --name auto-check-in --restart unless-stopped \
   -p 127.0.0.1:18990:18990 -v checkin-data:/data \
-  ghcr.io/sck03/auto-check-in:1.0.1
+  ghcr.io/sck03/auto-check-in:1.0.2
 
 # 离线导入同一成品
-docker load -i auto-check-in-1.0.1-docker-linux-amd64.tar.gz
+docker load -i auto-check-in-1.0.2-docker-linux-amd64.tar.gz
 ```
 
 Windows 解压 ZIP 后运行 AutoCheckIn.exe。发布包未进行代码签名。

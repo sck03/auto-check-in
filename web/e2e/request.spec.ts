@@ -1,0 +1,37 @@
+import { test, expect } from '@playwright/test'
+import { createServer } from 'node:http'
+import { request, blob } from '../src/api'
+
+test('请求超时覆盖完整 JSON 和图片响应体', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.write('{')
+    // Send headers immediately but leave the body stalled.
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as { port: number }
+  const originalFetch = globalThis.fetch
+  const originalWindow = globalThis.window
+  globalThis.window = globalThis as unknown as Window & typeof globalThis
+  globalThis.fetch = (input, options) =>
+    originalFetch(`http://127.0.0.1:${address.port}${input}`, options)
+  try {
+    for (const read of [request, blob]) {
+      const started = Date.now()
+      const result = await Promise.race([
+        read('/stalled', 'GET', undefined, { timeoutMs: 80 }).then(
+          () => 'completed',
+          () => 'aborted',
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still reading'), 800)),
+      ])
+      expect(result).toBe('aborted')
+      expect(Date.now() - started).toBeLessThan(800)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+    globalThis.window = originalWindow
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+})

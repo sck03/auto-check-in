@@ -11,6 +11,7 @@
 | [Fl API Hub](https://github.com/RebornQ/fl_api_hub/tree/94ef25b0381d54ab11d1631d569a5cca4451eb84) | `94ef25b` | 完整 README、1486 行总 PRD、1662 行 AccountDialog 规格、New API 签到响应说明；站点接口、AnyRouter 适配器、调度实现 | 账号管理、适配层、界面与维护性参考 |
 | [anyrouter-autolog](https://github.com/suainam/anyrouter-autolog/tree/687aa92944d19e83bc9c1cc25e0b544b4fa19525) | `687aa92` | 完整 README、配置模型、OAuth 实现、依赖和许可证；签到、结果判断与登录调用链 | AnyRouter 与 AgentRouter 协议参考 |
 | [anyrouter-check-in](https://github.com/millylee/anyrouter-check-in/tree/3b16662142c68703ea3e79c77c06a8cf6bba7990) | `3b16662` | 完整 README、Provider/Account 配置、许可证、HTTP 签到流程 | 同类站点的声明式配置参考 |
+| [New API](https://github.com/QuantumNous/new-api/tree/19d435e7fdfdaa2b9a734a76393f112cf980b815) | `19d435e` | OAuth 入口/回调、LinuxDo 服务端协议、登录状态与认证请求管理 | 衍生站的协议来源与版本差异核对 |
 
 研究副本在本地 `.research/`，不进入构建、发布包和版本控制。原项目的 PRD 包含浏览器扩展迁移规划，不能当成 Flutter 已实现功能的证明。
 
@@ -23,6 +24,8 @@
 5. **参考限制与产品计划分开。** 参考 README 记载 AnyRouter 可能按 24 小时间隔；用户要求每天成功一次。本项目统一按北京时间的自然日和随机窗口调度，站点若仍处于冷却期则如实记录，不将冷却拒绝视为可重试的网络故障。
 6. **进程内定时器不等于可靠任务系统。** Fl 的重试计数与上次尝试时间保存在内存，而且到达上限时会删除计数；不能直接照用。我们的排队、运行状态、重试次数和下次执行时间写入 SQLite。
 7. **浏览器不天然解决验证挑战。** 采用标准 Chromium + chromedp，正常页面操作和账号独立会话；验证码、二步验证、首次授权由用户通过人工登录界面处理。不会把未处理的挑战伪装成成功。
+8. **OAuth 不能假设一直停留在原标签页。** 此版本 New API 登录使用同页跳转，绑定/验证有新窗口；实际 Agent Router 的 LinuxDo 登录会新开页面。本程序同时支持同页、新页和关闭后的返回，并单独验证账号隔离。桌面人工登录直接使用可见浏览器，网页预览负责即时交互反馈。
+9. **衍生站不能仅按项目来源认定完全兼容。** New API 当前主干还存在访问令牌及刷新会话模型，较早分支常用 Cookie / localStorage user。登录路径、认证形态、签到接口及奖励字段按实际站点核对，不把主干行为强加给已部署的旧分支。
 
 ## 采用与边界
 
@@ -38,7 +41,7 @@
 
 ## 许可策略
 
-Fl API Hub 为 AGPL-3.0，本项目借鉴功能与架构思想，不复制其 Dart/TypeScript 实现、界面资产或设计稿。两个 Python 项目为 BSD-2-Clause；协议兼容参考与完整 BSD 声明记入 `THIRD_PARTY_NOTICES.md`。本项目独立实现 Go/Vue 代码，第三方依赖按各自许可证分发；本项目自身尚未指定开源许可证。
+Fl API Hub 与 New API 为 AGPL-3.0，本项目核对功能、架构和互操作协议，不复制其实现、界面资产或设计稿。两个 Python 项目为 BSD-2-Clause；协议兼容参考与完整 BSD 声明记入 `THIRD_PARTY_NOTICES.md`。本项目独立实现 Go/Vue 代码，第三方依赖按各自许可证分发；本项目自身尚未指定开源许可证。
 
 ## 验证口径
 

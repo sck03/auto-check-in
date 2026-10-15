@@ -54,6 +54,8 @@ type Interaction struct {
 
 type InteractiveSession interface {
 	Session
+	NativeWindow() bool
+	Done() <-chan struct{}
 	Screenshot(context.Context) ([]byte, error)
 	Interact(context.Context, Interaction) error
 }

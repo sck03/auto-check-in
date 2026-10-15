@@ -8,60 +8,104 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const token = 'local-e2e-fixture-token-32-characters-only'
 const auth = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }
-let url = '', siteURL = '', directory = '', server: ChildProcess
+let url = '',
+  siteURL = '',
+  directory = '',
+  server: ChildProcess
 let fixture: ReturnType<typeof createServer>
 const checked = new Set<string>()
 const calls = new Map<string, number>()
 let errors: string[] = []
 
 async function api(route: string, method = 'GET', data?: unknown) {
-  const response = await fetch(url + '/api/v1' + route, { method, headers: auth, body: data === undefined ? undefined : JSON.stringify(data) })
+  const response = await fetch(url + '/api/v1' + route, {
+    method,
+    headers: auth,
+    body: data === undefined ? undefined : JSON.stringify(data),
+  })
   if (!response.ok) throw new Error(await response.text())
   return response.status === 204 ? null : response.json()
 }
 async function start() {
-  checked.clear(); calls.clear(); errors = []
+  checked.clear()
+  calls.clear()
+  errors = []
   fixture = createServer(async (req, res) => {
     const route = new URL(req.url || '/', 'http://fixture').pathname
-    const send = (data: unknown, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)) }
+    const send = (data: unknown, status = 200) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(data))
+    }
     if (route === '/' || route === '/login') {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(fixtureHTML); return
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(fixtureHTML)
+      return
     }
     if (route === '/api/user/login') {
-      let raw = ''; for await (const chunk of req) raw += chunk
+      let raw = ''
+      for await (const chunk of req) raw += chunk
       const data = JSON.parse(raw)
-      if (data.password !== 'fixture-password') { send({ success: false }); return }
+      if (data.password !== 'fixture-password') {
+        send({ success: false })
+        return
+      }
       res.setHeader('Set-Cookie', 'session=' + data.username + '; HttpOnly; Path=/; SameSite=Lax')
-      send({ success: true, data: { id: data.username, checked_in: false } }); return
+      send({ success: true, data: { id: data.username, checked_in: false } })
+      return
     }
     const name = /(?:^|;\s*)session=([^;]+)/.exec(req.headers.cookie || '')?.[1]
-    if (!name || req.headers['new-api-user'] !== name) { send({ success: false }, 401); return }
-    if (route === '/api/user/self') { send({ success: true, data: { id: name, quota: checked.has(name) ? 750000 : 500000 } }); return }
+    if (!name || req.headers['new-api-user'] !== name) {
+      send({ success: false }, 401)
+      return
+    }
+    if (route === '/api/user/self') {
+      send({ success: true, data: { id: name, quota: checked.has(name) ? 750000 : 500000 } })
+      return
+    }
     if (route === '/api/user/checkin') {
-      if (req.method === 'GET') { send({ success: true, data: { stats: { checked_in_today: checked.has(name) } } }); return }
+      if (req.method === 'GET') {
+        send({ success: true, data: { stats: { checked_in_today: checked.has(name) } } })
+        return
+      }
       calls.set(name, (calls.get(name) || 0) + 1)
-      if (checked.has(name)) { send({ success: false, message: '今日已签到' }); return }
-      checked.add(name); send({ success: true, message: '签到成功', data: { quota_awarded: 250000 } }); return
+      if (checked.has(name)) {
+        send({ success: false, message: '今日已签到' })
+        return
+      }
+      checked.add(name)
+      send({ success: true, message: '签到成功', data: { quota_awarded: 250000 } })
+      return
     }
     send({ success: false }, 404)
   })
-  await new Promise<void>(resolve => fixture.listen(0, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => fixture.listen(0, '127.0.0.1', resolve))
   const address = fixture.address() as { port: number }
   siteURL = 'http://127.0.0.1:' + address.port
   await mkdir(path.join(root, 'artifacts'), { recursive: true })
   directory = await mkdtemp(path.join(root, 'artifacts', 'e2e-'))
-  const executable = path.join(root, 'dist', process.platform === 'win32' ? 'checkin-server.exe' : 'checkin-server')
+  const executable = path.join(
+    root,
+    'dist',
+    process.platform === 'win32' ? 'checkin-server.exe' : 'checkin-server',
+  )
   server = spawn(executable, ['-listen', '127.0.0.1:0', '-data', directory], {
     env: { ...process.env, CHECKIN_ACCESS_TOKEN: token, CHECKIN_ALLOW_HTTP: 'true' },
-    windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
   let log = ''
-  server.stdout?.on('data', data => log += data.toString())
-  server.stderr?.on('data', data => log += data.toString())
-  server.on('error', e => { log += String(e) })
+  server.stdout?.on('data', (data) => (log += data.toString()))
+  server.stderr?.on('data', (data) => (log += data.toString()))
+  server.on('error', (e) => {
+    log += String(e)
+  })
   for (let i = 0; i < 150; i++) {
-    try { url = JSON.parse(await readFile(path.join(directory, 'endpoint.json'), 'utf8')).url; break }
-    catch { await new Promise(resolve => setTimeout(resolve, 100)) }
+    try {
+      url = JSON.parse(await readFile(path.join(directory, 'endpoint.json'), 'utf8')).url
+      break
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
   }
   if (!url) throw new Error('server failed: ' + log)
   const settings = await api('/settings')
@@ -72,28 +116,45 @@ let saveLog: () => Promise<void>
 test.beforeEach(async ({ page }) => {
   url = ''
   saveLog = await start()
-  page.on('pageerror', e => errors.push(e.message))
+  page.on('pageerror', (e) => errors.push(e.message))
   await page.goto(url + '/#token=' + token)
   await expect(page.getByRole('heading', { name: '我的账号' })).toBeVisible()
 })
 test.afterEach(async () => {
   await saveLog?.()
   server?.kill()
-  await new Promise<void>(resolve => fixture?.close(() => resolve()))
+  await new Promise<void>((resolve) => fixture?.close(() => resolve()))
 })
 async function seedSite() {
   const templates = await api('/templates')
-  return api('/sites', 'POST', { ...templates.find((t: any) => t.id === 'newapi').site, id: '', name: '本地测试站', base_url: siteURL })
+  return api('/sites', 'POST', {
+    ...templates.find((t: any) => t.id === 'newapi').site,
+    id: '',
+    name: '本地测试站',
+    base_url: siteURL,
+  })
 }
 async function seedAccount(name: string, withSession = true) {
   const site = await seedSite()
   const templates = await api('/templates')
   return api('/accounts', 'POST', {
-    name, site_id: site.id, enabled: true, version: 0, schedule: templates[0].schedule,
-    credentials: { method: 'cookie', ...(withSession ? { api_user: name, cookie_header: 'session=' + name } : {}) },
+    name,
+    site_id: site.id,
+    enabled: true,
+    version: 0,
+    schedule: templates[0].schedule,
+    credentials: {
+      method: 'cookie',
+      ...(withSession ? { api_user: name, cookie_header: 'session=' + name } : {}),
+    },
   })
 }
-async function selectNav(page: Page, label: string) { await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: label }).click() }
+async function selectNav(page: Page, label: string) {
+  await page
+    .getByRole('navigation', { name: '主导航' })
+    .getByRole('button', { name: label })
+    .click()
+}
 
 test('站点和账号管理、签到结果、每日防重复、编辑保留凭据', async ({ page }) => {
   await selectNav(page, '站点管理')
@@ -139,9 +200,10 @@ test('站点和账号管理、签到结果、每日防重复、编辑保留凭�
 })
 
 test('人工浏览器登录并保存独立会话', async ({ page }) => {
-  await page.route('**/api/v1/sessions/*/input', async route => {
+  await page.route('**/api/v1/sessions/*/input', async (route) => {
     const input = route.request().postDataJSON()
-    if (input.type === 'text' && input.text === 'login-user') await new Promise(resolve => setTimeout(resolve, 600))
+    if (input.type === 'text' && input.text === 'login-user')
+      await new Promise((resolve) => setTimeout(resolve, 600))
     await route.continue()
   })
   const account = await seedAccount('login-user', false)
@@ -153,7 +215,9 @@ test('人工浏览器登录并保存独立会话', async ({ page }) => {
   const bounds = await screenshot.boundingBox()
   if (!bounds) throw new Error('missing browser viewport')
   // Fixture input has explicit coordinates in its own 1200px viewport.
-  await screenshot.click({ position: { x: 100 * bounds.width / 1200, y: 135 * bounds.width / 1200 } })
+  await screenshot.click({
+    position: { x: (100 * bounds.width) / 1200, y: (135 * bounds.width) / 1200 },
+  })
   await page.getByLabel('向选中的网页输入框填写文字').fill('login-user')
   await page.getByRole('button', { name: '输入', exact: true }).click()
   await page.getByRole('button', { name: '下一输入框' }).click()
@@ -176,7 +240,9 @@ test('访问保护、加密备份和空白实例恢复', async ({ page }) => {
   await seedAccount('backup-user')
   const denied = await fetch(url + '/api/v1/accounts')
   expect(denied.status).toBe(401)
-  const crossOrigin = await fetch(url + '/api/v1/accounts', { headers: { ...auth, Origin: 'https://untrusted.invalid' } })
+  const crossOrigin = await fetch(url + '/api/v1/accounts', {
+    headers: { ...auth, Origin: 'https://untrusted.invalid' },
+  })
   expect(crossOrigin.status).toBe(403)
   const visible = JSON.stringify(await api('/accounts'))
   expect(visible).not.toContain('session=backup-user')
@@ -192,9 +258,122 @@ test('访问保护、加密备份和空白实例恢复', async ({ page }) => {
   expect(archive.toString()).not.toContain('backup-user')
   const all = await api('/accounts')
   await api('/accounts/' + all[0].id, 'DELETE')
-  await api('/backup/restore', 'POST', { password: 'e2e-long-backup-password', archive: archive.toString('base64') })
+  await api('/backup/restore', 'POST', {
+    password: 'e2e-long-backup-password',
+    archive: archive.toString('base64'),
+  })
   expect((await api('/accounts'))[0].auth.has_session).toBe(true)
   expect((await api('/settings')).scheduler_enabled).toBe(false)
+  expect(errors).toEqual([])
+})
+
+test('登录预览支持直接键盘输入并及时刷新', async ({ page }) => {
+  const textInputs: string[] = []
+  await page.route('**/api/v1/sessions/*/input', async (route) => {
+    const event = route.request().postDataJSON()
+    if (event.type === 'text') textInputs.push(event.text)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await route.continue()
+  })
+  const account = await seedAccount('keyboard-user', false)
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await page.getByRole('button', { name: '浏览器登录 keyboard-user' }).click()
+  const screenshot = page.getByAltText('独立登录浏览器，可点击页面进行操作')
+  await expect(screenshot).toBeVisible()
+  const bounds = await screenshot.boundingBox()
+  if (!bounds) throw new Error('missing browser viewport')
+  await screenshot.click({
+    position: { x: (100 * bounds.width) / 1200, y: (135 * bounds.width) / 1200 },
+  })
+  const frame = screenshot.getAttribute('src')
+  await page.keyboard.type('keyboard-user', { delay: 20 })
+  await expect(screenshot).not.toHaveAttribute('src', (await frame) as string, { timeout: 1200 })
+  await page.keyboard.press('Tab')
+  await page.keyboard.type('fixture-password', { delay: 20 })
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('正在发送操作…')).toHaveCount(0)
+  await page.getByRole('button', { name: '保存会话', exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  const saved = (await api('/accounts')).find((a: any) => a.id === account.id)
+  expect(saved.auth.api_user).toBe('keyboard-user')
+  expect(saved.auth.has_session).toBe(true)
+  expect(textInputs.join('')).toBe('keyboard-userfixture-password')
+  expect(textInputs.length).toBeLessThanOrEqual(8)
+  console.log(`连续输入：29 个字符合并为 ${textInputs.length} 次请求（每次模拟 200ms 延迟）`)
+  expect(errors).toEqual([])
+})
+
+test('保存站点时保留进行中的刷新之后的更新', async ({ page }) => {
+  await selectNav(page, '站点管理')
+  await page.getByRole('button', { name: '添加站点', exact: true }).click()
+  await page.getByLabel('站点名称', { exact: true }).fill('刷新期间新增站点')
+  await page.getByLabel('站点地址', { exact: true }).fill(siteURL)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let captured!: () => void
+  const started = new Promise<void>((resolve) => {
+    captured = resolve
+  })
+  let held = false
+  await page.route('**/api/v1/accounts', async (route) => {
+    if (held) {
+      await route.continue()
+      return
+    }
+    held = true
+    const response = await route.fetch()
+    captured()
+    await gate
+    await route.fulfill({ response })
+  })
+  try {
+    // A background refresh can finish with data from before the mutation.
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await started
+    await page.getByRole('button', { name: '保存站点' }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    release()
+    await expect(page.getByRole('heading', { name: '刷新期间新增站点' })).toBeVisible({
+      timeout: 2500,
+    })
+  } finally {
+    release()
+  }
+  expect(errors).toEqual([])
+})
+
+test('退出管理界面后丢弃迟到的刷新响应', async ({ page }) => {
+  await selectNav(page, '设置')
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let captured!: () => void
+  const started = new Promise<void>((resolve) => {
+    captured = resolve
+  })
+  await page.route('**/api/v1/meta', async (route) => {
+    const response = await route.fetch()
+    captured()
+    await gate
+    await route.fulfill({ response }).catch(() => undefined)
+  })
+  try {
+    await page.getByRole('button', { name: '刷新数据' }).click()
+    await started
+    const aborted = page.waitForEvent('requestfailed', (request) =>
+      request.url().endsWith('/api/v1/meta'),
+    )
+    await page.getByRole('button', { name: '退出管理界面' }).click()
+    await aborted
+    release()
+    await expect(page.getByRole('heading', { name: '连接签到台' })).toBeVisible()
+    expect(await page.evaluate(() => sessionStorage.getItem('checkin.access'))).toBeNull()
+  } finally {
+    release()
+  }
   expect(errors).toEqual([])
 })
 

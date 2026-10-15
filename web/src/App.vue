@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { initializeConnection, setToken } from './api'
+import { initializeConnection, request, setToken } from './api'
 import { useWorkspace } from './composables/useWorkspace'
 import { time, today } from './format'
 import type { LoginInfo } from './types'
@@ -33,13 +33,15 @@ const attention = computed(
       ['needs_attention', 'unverified', 'interrupted'].includes(a.last_status),
     ).length,
 )
-const next = computed(
-  () =>
-    accounts.value
-      .filter((a) => a.enabled && a.next_run_at)
-      .map((a) => a.next_run_at!)
-      .sort()[0],
-)
+const next = computed(() => {
+  let earliest: string | undefined
+  for (const account of accounts.value) {
+    if (account.enabled && account.next_run_at && (!earliest || account.next_run_at < earliest)) {
+      earliest = account.next_run_at
+    }
+  }
+  return earliest
+})
 let interval = 0,
   toastTimer = 0
 async function refresh(full: unknown = true) {
@@ -70,10 +72,13 @@ function browserSaved() {
   notify('会话已保存，可返回账号列表查看计划或手动签到')
 }
 function logout() {
+  if (browserInfo.value)
+    void request('/sessions/' + browserInfo.value.id, 'DELETE', undefined, {
+      timeoutMs: 12000,
+    }).catch(() => undefined)
+  workspace.reset()
   setToken('')
-  authorized.value = false
   browserInfo.value = null
-  error.value = ''
 }
 onMounted(async () => {
   try {
@@ -88,7 +93,9 @@ onMounted(async () => {
   }, 5000)
   document.addEventListener('visibilitychange', visible)
 })
-function visible() { if (document.visibilityState === 'visible' && authorized.value) void refresh() }
+function visible() {
+  if (document.visibilityState === 'visible' && authorized.value) void refresh()
+}
 onBeforeUnmount(() => {
   clearInterval(interval)
   clearTimeout(toastTimer)

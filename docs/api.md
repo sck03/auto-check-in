@@ -24,8 +24,8 @@
 | DELETE | `/runs/{id}` | 取消尚未开始的任务 |
 | POST | `/accounts/{id}/login` | 创建人工登录会话 |
 | GET | `/sessions/{id}` | 登录会话描述与过期时间 |
-| GET | `/sessions/{id}/screenshot` | 受鉴权保护的 PNG |
-| POST | `/sessions/{id}/input` | click / text / key / scroll / reload |
+| GET | `/sessions/{id}/screenshot` | 受鉴权保护的 JPEG，主要用于网页预览 |
+| POST | `/sessions/{id}/input` | click / text / key / scroll / reload / focus |
 | POST / DELETE | `/sessions/{id}/save` / `/sessions/{id}` | 保存 / 取消登录 |
 | POST | `/backup/export` | `{"password":"..."}`，返回加密二进制文件 |
 | POST | `/backup/restore` | `{"password":"...","archive":"Base64 文件内容"}` |
@@ -56,6 +56,8 @@
 ```
 
 `credentials` 为写入补丁。省略字段保留旧值，显式空字符串可清空；设置 `cookie_header` 会替换旧 Cookie 并清除旧浏览器存储。读取账号仅返回 `auth` 摘要，不返回密码、Cookie、Token。更新时携带读取到的 `version`；创建为 0。正在排队、执行或人工登录的账号禁止编辑和删除。
+
+登录会话描述包含 `native_window`。为 true 时，客户端显示独立窗口的操作说明，不轮询截图；`focus` 用于显示当前登录窗口。取消会先中断正在等待的浏览器操作；关闭独立浏览器后，服务会结束会话并释放容量。
 
 ## 执行与人工重试
 

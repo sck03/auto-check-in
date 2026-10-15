@@ -11,6 +11,7 @@ import (
 	"auto-check-in/internal/transport"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/input"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 )
@@ -108,15 +109,29 @@ func (s *Session) PageCheckIn(ctx context.Context) (domain.Result, error) {
 }
 
 func (s *Session) Screenshot(ctx context.Context) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var data []byte
-	err := s.run(ctx, cdpCaptureScreenshot(&data))
-	return data, err
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	for {
+		var data []byte
+		err := s.run(ctx, cdpCaptureScreenshot(&data))
+		if err == nil {
+			return data, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-s.ctx.Done():
+			return nil, s.ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			// Navigation and a just-closed OAuth popup can briefly have no frame.
+		}
+	}
 }
 func (s *Session) Interact(ctx context.Context, event port.Interaction) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
 	switch event.Type {
 	case "click":
 		if math.IsNaN(event.X) || math.IsNaN(event.Y) || event.X < 0 || event.X > 1200 || event.Y < 0 || event.Y > 800 {
@@ -150,6 +165,11 @@ func (s *Session) Interact(ctx context.Context, event port.Interaction) error {
 		}))
 	case "reload":
 		return s.run(ctx, cdpReload())
+	case "focus":
+		return s.run(ctx, cdpActionFunc(func(ctx context.Context) error {
+			_, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.BringToFront, cdp.Empty{})
+			return err
+		}))
 	}
 	return fmt.Errorf("不支持的浏览器操作")
 }

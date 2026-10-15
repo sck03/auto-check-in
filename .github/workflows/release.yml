@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag, for example v1.0.1'
+        description: 'Version tag, for example v1.0.2'
         required: true
-        default: v1.0.1
+        default: v1.0.2
 permissions:
   contents: read
 concurrency:
@@ -169,6 +169,8 @@ jobs:
           files: release/*
           body: |
             Windows 桌面程序包含系统托盘、开机运行开关和独立管理窗口。
+            浏览器登录使用独立的真实浏览器窗口；支持 OAuth 新页面跟随，网页预览支持直接输入并及时刷新。
+            修复旧会话覆盖新登录、取消启动后资源残留、保存后刷新丢失；合并连续输入以减少网络等待。
             程序压缩包仅包含可执行文件、简短 README 和单个 THIRD_PARTY_NOTICES.md；完整文档见仓库。
             Docker 镜像支持 linux/amd64 与 linux/arm64：
             `docker pull ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}`

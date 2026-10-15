@@ -127,7 +127,7 @@ func Start(config Config) (rt *Runtime, err error) {
 		return nil, fmt.Errorf("无法监听 %s：%w", config.Listen, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	browsers := browser.New(browser.Config{Executable: config.BrowserPath, TempDir: filepath.Join(dir, "temporary"), ProxyURL: config.ProxyURL, NoSandbox: config.NoSandbox})
+	browsers := browser.New(browser.Config{Executable: config.BrowserPath, TempDir: filepath.Join(dir, "temporary"), ProxyURL: config.ProxyURL, NoSandbox: config.NoSandbox, InteractiveVisible: config.Desktop})
 	executor := &provider.Runner{Factory: transport.Factory{Browser: browsers, ProxyURL: config.ProxyURL}}
 	service := app.New(ctx, repo, executor, browsers, config.AllowHTTP)
 	host, port, _ := net.SplitHostPort(listener.Addr().String())

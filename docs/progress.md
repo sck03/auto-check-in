@@ -11,14 +11,16 @@
 | R03 | 页面流程扩展与可替换执行层 | port / browser | 已完成，注册表和会话接口可独立扩展 |
 | R04 | 北京时间 08:00–09:00 随机首次执行、成功一天一次、分类补签至 09:30 | domain / store / app | 已完成，重启预算和截止时间测试通过 |
 | R05 | 凭据加密、账号隔离、API 鉴权、加密备份 | security / store / httpapi | 已完成，篡改/错误口令/回滚/读回脱敏通过 |
-| R06 | 登录失效/验证码的人工处理入口 | browser / app / web | 已完成，真实 Chromium 登录和保存会话通过 |
+| R06 | 登录失效/验证码的人工处理入口 | browser / app / web | 已完成，桌面独立登录窗口、网页直接输入及两种 OAuth 跳转/返回通过 |
 | R07 | 奖励与余额分开、历史记录 | provider / store / web | 已完成，奖励字段与余额变化独立验证 |
 | R08 | Windows 程序与 Docker 共用核心 | cmd / Dockerfile / scripts | Windows 成品、Linux 构建和 GitHub 实际容器验证通过 |
 | R09 | 架构、运维、扩展文档与测试证据 | docs / tests | 已完成，文档按最终方案修订 |
 | R10 | 托盘、自启动、八项右键菜单 | desktop / DesktopSettings | 已完成，实际 Windows 程序验证通过 |
 | R11 | 空闲资源、流畅性和稳定性 | browser/pool / app/engine / web | 已完成，共享进程隔离、取消和回收测试通过 |
 | R12 | GitHub 最新稳定 Actions、Windows/Docker 产物与发布 | .github/workflows / scripts | 已配置完整 SHA 固定版本，Verify 全部通过；版本产物见 Releases |
-| R13 | 精简发布包、保留完整许可、固定 Ubuntu 26.04 | build/archive / scripts / .github | v1.0.1 本地打包与静态检查通过，在线构建待验证 |
+| R13 | 精简发布包、保留完整许可、固定 Ubuntu 26.04 | build/archive / scripts / .github | v1.0.1 已发布，Ubuntu 26.04 Verify / Release 全部通过 |
+| R14 | 登录卡顿、OAuth 新页及四种登录方式验证 | browser/tabs / interactive / BrowserDialog | v1.0.2 本地 Chromium、竞态、网页 E2E 与 Windows 成品测试通过，在线发布待验证 |
+| R15 | 登录状态覆盖、取消启动残留、刷新并发与输入积压 | browser/process / app/login / web | 全量竞态、7 组网页回归、可见 OAuth 及 Windows 成品资源释放验证通过，在线 CI 待验证 |
 
 ## 本地验收结果
 
@@ -27,17 +29,24 @@
 | Go 单元测试与静态检查 | 通过 |
 | Go 竞态测试 | 通过，包括真实 Chromium 资源池 |
 | 前端类型检查与生产构建 | 通过 |
-| 网页端到端测试 | 3 组通过：管理/签到、防护/备份、人工登录 |
+| 网页回归测试 | 7 组通过：管理/签到、防护/备份、人工登录、高延迟直接输入、刷新与保存并发、退出后的迟到响应、完整响应体超时 |
 | Windows 程序 | 启动、自动连接、版本显示通过 |
 | 托盘生命周期 | 最小化、恢复、关闭留驻、暂停、正常退出通过 |
 | 开机运行 | 开关联动、当前用户注册适配器、偏好冲突与失败回滚通过；未执行整机重启 |
 | 资源池 | 两个账号一个后台进程，Cookie 隔离、独立取消、空闲释放通过 |
 | 发布包 | v1.0.1 Windows ZIP 仅 4 个文件、Linux tar 仅 3 个文件；54 个依赖和 Go 的完整许可合并保留，重复构建通过 |
 | Linux 文件权限 | tar 内服务程序为 0755、说明文件为 0644；归档回归测试通过 |
+| 登录方式 | Cookie 恢复、密码登录、GitHub/LinuxDo 同页及新页授权回调、窗口关闭返回、会话保存和账号隔离通过 |
+| 桌面人工登录 | 实际窗口打开、显示、取消通过，管理页面不再轮询截图 |
+| 启动与状态恢复 | 无响应浏览器进程、等待启动的账号均可取消；诊断查询不阻塞，临时目录与会话名额释放；后续页面不再重复注入旧登录状态 |
 
 截图与机器可读记录由测试脚本保存在本地 artifacts/。一次空白实例的托盘诊断为 Go 堆约 1.45 MiB、12 个 goroutine、后台浏览器未运行；这不是总 RSS 或通用性能承诺。
 
+2026-10-15 的高延迟回归：每次输入请求人为增加 200 ms 延迟，同样 29 个字符由修复前的 29 次请求合并为 4 次，减少约 86%。测试同时核对输入内容、跨输入框顺序及会话保存；该数字衡量请求数，不代表所有网站的整体速度提升比例。
+
 ## 在线构建与发布
+
+**v1.0.1 已发布**：[Verify #38703736992](https://github.com/sck03/auto-check-in/actions/runs/38703736992) 和 [Release #38704107828](https://github.com/sck03/auto-check-in/actions/runs/38704107828) 全部通过；Linux job 固定为 Ubuntu 26.04，新运行没有迁移警告。程序包不再带 docs/licenses 目录，完整第三方许可保留在单个声明文件；发布前已核对归档文件清单、SHA-256 和 Linux 程序执行权限。
 
 首轮完整远端验收：[Verify #38698044432](https://github.com/sck03/auto-check-in/actions/runs/38698044432)，Windows、Linux、container 三个 job 全部成功，对应实现提交 3a5f15d。容器测试包含真正的 Chromium 密码登录、签到、奖励判断和重启后的去重。
 
@@ -55,6 +64,7 @@
 
 - 原会话全部要求已核对，包括“前端不需要复杂”的最后更正。
 - 三个开源项目已固定版本、阅读相关完整方案，并核对关键代码。
+- 补充核对 New API `19d435e` 的 OAuth 和认证实现；保留不同分支的登录、会话与奖励差异。Agent Router 公开登录页实测会另开 LinuxDo 授权页，可出现站点验证；尚未使用真实账号完成登录。
 - 已确定 Go + Vue + SQLite + chromedp，Windows 薄壳与 Docker 共享 API。
 - 已记录来源冲突、许可处理、AgentRouter 语义与奖励核验规则；按本线程最新要求统一每日随机窗口。
 - 已核对并安装最新稳定版 Go 1.27.2（官方 stable=true、SHA-256 已验证）。

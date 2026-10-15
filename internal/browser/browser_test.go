@@ -49,8 +49,8 @@ func TestRealBrowserAccountIsolationAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	png, err := session.Screenshot(ctx)
-	if err != nil || !bytes.HasPrefix(png, []byte{137, 80, 78, 71}) {
+	frame, err := session.Screenshot(ctx)
+	if err != nil || !bytes.HasPrefix(frame, []byte{0xff, 0xd8, 0xff}) {
 		t.Fatal("screenshot unavailable", err)
 	}
 	if err = session.Interact(ctx, port.Interaction{Type: "reload"}); err != nil {

@@ -13,14 +13,15 @@ import (
 )
 
 type LoginInfo struct {
-	ID        string    `json:"id"`
-	AccountID string    `json:"account_id"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Width     int       `json:"width"`
-	Height    int       `json:"height"`
+	ID           string    `json:"id"`
+	AccountID    string    `json:"account_id"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	Width        int       `json:"width"`
+	Height       int       `json:"height"`
+	NativeWindow bool      `json:"native_window"`
 }
 type loginSession struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	info    LoginInfo
 	session port.InteractiveSession
 	site    domain.Site
@@ -28,8 +29,7 @@ type loginSession struct {
 	closed  bool
 }
 
-func (s *Service) StartLogin(ctx context.Context, accountID string) (LoginInfo, error) {
-	var info LoginInfo
+func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginInfo, err error) {
 	s.mu.Lock()
 	if s.closing {
 		s.mu.Unlock()
@@ -41,6 +41,33 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (LoginInfo, 
 	if !s.Browser.Available() {
 		return info, port.ErrBrowserUnavailable
 	}
+	// Reserve the account before reading credentials so an edit cannot race
+	// startup and later be overwritten by a stale login snapshot.
+	run, err := s.Repo.BeginLogin(ctx, accountID, time.Now().UTC())
+	if err != nil {
+		return info, err
+	}
+	expires := time.Now().Add(10 * time.Minute).UTC()
+	life, cancel := context.WithDeadline(s.ctx, expires)
+	stopRequest := context.AfterFunc(ctx, cancel)
+	defer stopRequest()
+	var session port.InteractiveSession
+	defer func() {
+		if err == nil {
+			return
+		}
+		cancel()
+		if session != nil {
+			session.Close()
+		}
+		finishCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		status, message := domain.Failed, "浏览器启动失败，请检查浏览器路径与运行环境"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			status, message = domain.Cancelled, "登录启动已取消"
+		}
+		_ = s.Repo.FinishLogin(finishCtx, run.ID, nil, status, message, time.Now().UTC())
+	}()
 	a, err := s.Repo.Account(ctx, accountID)
 	if err != nil {
 		return info, err
@@ -53,24 +80,25 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (LoginInfo, 
 	if err != nil {
 		return info, err
 	}
-	run, err := s.Repo.BeginLogin(ctx, accountID, time.Now().UTC())
+	session, err = s.Browser.OpenInteractive(life, site, c)
 	if err != nil {
-		return info, err
-	}
-	expires := time.Now().Add(10 * time.Minute).UTC()
-	life, cancel := context.WithDeadline(s.ctx, expires)
-	session, err := s.Browser.OpenInteractive(life, site, c)
-	if err != nil {
-		cancel()
-		finishCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
-		defer done()
-		_ = s.Repo.FinishLogin(finishCtx, run.ID, nil, domain.Failed, "浏览器启动失败，请检查浏览器路径与运行环境", time.Now().UTC())
+		if life.Err() != nil {
+			return info, life.Err()
+		}
 		if errors.Is(err, port.ErrBrowserBusy) {
 			return info, err
 		}
 		return info, fmt.Errorf("浏览器启动失败，请检查浏览器路径或网络")
 	}
-	info = LoginInfo{ID: run.ID, AccountID: accountID, ExpiresAt: expires, Width: 1200, Height: 800}
+	// A successful session outlives its POST request. Until this point, losing
+	// that request must also stop startup and release the account reservation.
+	if !stopRequest() {
+		return info, ctx.Err()
+	}
+	if err = life.Err(); err != nil {
+		return info, err
+	}
+	info = LoginInfo{ID: run.ID, AccountID: accountID, ExpiresAt: expires, Width: 1200, Height: 800, NativeWindow: session.NativeWindow()}
 	entry := &loginSession{info: info, session: session, site: site, cancel: cancel}
 	s.mu.Lock()
 	s.logins[run.ID] = entry
@@ -78,7 +106,10 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (LoginInfo, 
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		<-life.Done()
+		select {
+		case <-life.Done():
+		case <-session.Done():
+		}
 		entry.mu.Lock()
 		defer entry.mu.Unlock()
 		if !entry.closed {
@@ -108,8 +139,8 @@ func (s *Service) Screenshot(ctx context.Context, id string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
+	entry.mu.RLock()
+	defer entry.mu.RUnlock()
 	if entry.closed {
 		return nil, domain.ErrNotFound
 	}
@@ -120,14 +151,16 @@ func (s *Service) Interact(ctx context.Context, id string, event port.Interactio
 	if err != nil {
 		return err
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
+	entry.mu.RLock()
+	defer entry.mu.RUnlock()
 	if entry.closed {
 		return domain.ErrNotFound
 	}
 	return entry.session.Interact(ctx, event)
 }
 func (s *Service) SaveLogin(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
 	entry, err := s.login(id)
 	if err != nil {
 		return err
@@ -164,6 +197,8 @@ func (s *Service) CancelLogin(id string) error {
 	if err != nil {
 		return err
 	}
+	// Cancel active CDP work before waiting for its read lock.
+	entry.cancel()
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	if entry.closed {
