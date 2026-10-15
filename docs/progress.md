@@ -18,6 +18,7 @@
 | R10 | 托盘、自启动、八项右键菜单 | desktop / DesktopSettings | 已完成，实际 Windows 程序验证通过 |
 | R11 | 空闲资源、流畅性和稳定性 | browser/pool / app/engine / web | 已完成，共享进程隔离、取消和回收测试通过 |
 | R12 | GitHub 最新稳定 Actions、Windows/Docker 产物与发布 | .github/workflows / scripts | 已配置完整 SHA 固定版本，Verify 全部通过；版本产物见 Releases |
+| R13 | 精简发布包、保留完整许可、固定 Ubuntu 26.04 | build/archive / scripts / .github | v1.0.1 本地打包与静态检查通过，在线构建待验证 |
 
 ## 本地验收结果
 
@@ -31,7 +32,8 @@
 | 托盘生命周期 | 最小化、恢复、关闭留驻、暂停、正常退出通过 |
 | 开机运行 | 开关联动、当前用户注册适配器、偏好冲突与失败回滚通过；未执行整机重启 |
 | 资源池 | 两个账号一个后台进程，Cookie 隔离、独立取消、空闲释放通过 |
-| 发布包 | Windows ZIP、Linux 服务包、许可证和 SHA-256 已生成 |
+| 发布包 | v1.0.1 Windows ZIP 仅 4 个文件、Linux tar 仅 3 个文件；54 个依赖和 Go 的完整许可合并保留，重复构建通过 |
+| Linux 文件权限 | tar 内服务程序为 0755、说明文件为 0644；归档回归测试通过 |
 
 截图与机器可读记录由测试脚本保存在本地 artifacts/。一次空白实例的托盘诊断为 Go 堆约 1.45 MiB、12 个 goroutine、后台浏览器未运行；这不是总 RSS 或通用性能承诺。
 

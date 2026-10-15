@@ -1,0 +1,6 @@
+# actionlint v1.7.12 predates this generally available GitHub-hosted label.
+# This lint allowlist does not change jobs to self-hosted runners.
+# https://github.com/actions/runner-images/issues/14748
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

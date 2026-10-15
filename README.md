@@ -23,6 +23,8 @@
 
 使用发布目录中的 `AutoCheckIn.exe`。运行设备需要已安装 Edge 或 Chrome；用户不需要 Go、Node 或 Python。
 
+从 v1.0.1 起，程序压缩包只包含可执行文件、简短 `README.md` 和单个 `THIRD_PARTY_NOTICES.md`。完整文档保留在仓库，依赖版本及完整许可文本合并到声明文件中，不再附带 `docs/` 或 `licenses/` 文件夹。
+
 1. 双击 `AutoCheckIn.exe`，打开独立管理窗口。
 2. 在“站点管理”中确认站点地址，在“账号签到”中添加账号。
 3. 使用“浏览器登录”绑定会话，或填写账号凭据。Agent Router 请选择密码或 OAuth 登录。
@@ -56,6 +58,8 @@ docker compose exec checkin sh -c 'cat /data/access.token'
 ## 构建与测试
 
 本次实际使用 **Go 1.27.2**，2026-10-15 官方发布清单标记为最新稳定版。`go.mod` 固定 `toolchain go1.27.2`。前端使用 Node 24、Vue 3、TypeScript 5.9；TypeScript 版本与当前 vue-tsc 配套锁定。
+
+GitHub Actions 的 Linux 运行器明确固定为 **`ubuntu-26.04`**，避免 `ubuntu-latest` 迁移时自动切换环境。Docker 运行时使用独立固定的 Debian 基础镜像。
 
 ```powershell
 # Windows：完整构建、测试、打包

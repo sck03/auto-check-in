@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag, for example v1.0.0'
+        description: 'Version tag, for example v1.0.1'
         required: true
-        default: v1.0.0
+        default: v1.0.1
 permissions:
   contents: read
 concurrency:
@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
@@ -59,7 +59,7 @@ jobs:
             dist/SHA256SUMS.txt
   docker:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -126,7 +126,7 @@ jobs:
           docker rm -f checkin-release || true
   publish:
     needs: [version, windows, docker]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
@@ -142,6 +142,22 @@ jobs:
         run: |
           cat release/SHA256SUMS.txt release/DOCKER-SHA256SUMS.txt > release/ALL-SHA256SUMS.txt
           rm release/SHA256SUMS.txt release/DOCKER-SHA256SUMS.txt
+      - name: Verify archive contents and Linux executable
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cd release
+          sha256sum --check ALL-SHA256SUMS.txt
+          diff -u <(printf '%s\n' AutoCheckIn.exe checkin-server.exe README.md THIRD_PARTY_NOTICES.md | sort) \
+            <(unzip -Z1 "AutoCheckIn-$RELEASE_VERSION-windows-amd64.zip" | sort)
+          diff -u <(printf '%s\n' checkin-server README.md THIRD_PARTY_NOTICES.md | sort) \
+            <(tar -tzf "auto-check-in-$RELEASE_VERSION-linux-amd64.tar.gz" | sort)
+          extracted="$(mktemp -d)"
+          tar -xzf "auto-check-in-$RELEASE_VERSION-linux-amd64.tar.gz" -C "$extracted"
+          test -x "$extracted/checkin-server"
+          test "$("$extracted/checkin-server" -version)" = "$RELEASE_VERSION"
+          unzip -p "AutoCheckIn-$RELEASE_VERSION-windows-amd64.zip" THIRD_PARTY_NOTICES.md \
+            | cmp - "$extracted/THIRD_PARTY_NOTICES.md"
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
@@ -153,6 +169,7 @@ jobs:
           files: release/*
           body: |
             Windows 桌面程序包含系统托盘、开机运行开关和独立管理窗口。
+            程序压缩包仅包含可执行文件、简短 README 和单个 THIRD_PARTY_NOTICES.md；完整文档见仓库。
             Docker 镜像支持 linux/amd64 与 linux/arm64：
             `docker pull ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}`
             同时附带 amd64 Docker 离线镜像压缩包，可使用 `docker load` 导入。

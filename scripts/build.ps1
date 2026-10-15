@@ -1,7 +1,7 @@
 param(
     [string]$Go = '',
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$')]
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.0.1',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
@@ -41,18 +41,26 @@ try {
     Invoke-Checked $Go @('build', '-trimpath', '-ldflags', "-H=windowsgui -s -w -X auto-check-in/internal/buildinfo.Version=$Version", '-o', (Join-Path $windowsOutput 'AutoCheckIn.exe'), './cmd/desktop')
     Invoke-Checked $Go @('build', '-trimpath', '-ldflags', "-s -w -X auto-check-in/internal/buildinfo.Version=$Version", '-o', (Join-Path $windowsOutput 'checkin-server.exe'), './cmd/server')
     Copy-Item -LiteralPath (Join-Path $windowsOutput 'AutoCheckIn.exe'), (Join-Path $windowsOutput 'checkin-server.exe') -Destination (Join-Path $projectRoot 'dist') -Force
-    Invoke-Checked 'node' @('scripts/licenses.mjs', '--go', $Go, '--out', (Join-Path $windowsOutput 'licenses'))
+    Invoke-Checked 'node' @('scripts/licenses.mjs', '--go', $Go, '--out', (Join-Path $windowsOutput 'THIRD_PARTY_NOTICES.md'))
     $env:GOOS = 'linux'
     Invoke-Checked $Go @('build', '-trimpath', '-ldflags', "-s -w -X auto-check-in/internal/buildinfo.Version=$Version", '-o', (Join-Path $linuxOutput 'checkin-server'), './cmd/server')
-    Copy-Item -LiteralPath (Join-Path $windowsOutput 'licenses') -Destination $linuxOutput -Recurse -Force
+    Copy-Item -LiteralPath (Join-Path $windowsOutput 'THIRD_PARTY_NOTICES.md') -Destination $linuxOutput -Force
+    $readme = [IO.File]::ReadAllText((Join-Path $projectRoot 'build/release/README.md')).Replace('@VERSION@', $Version)
     foreach ($destination in @($windowsOutput, $linuxOutput)) {
-        Copy-Item -LiteralPath 'README.md', 'THIRD_PARTY_NOTICES.md' -Destination $destination -Force
-        Copy-Item -LiteralPath 'docs' -Destination $destination -Recurse -Force
+        [IO.File]::WriteAllText((Join-Path $destination 'README.md'), $readme, [Text.UTF8Encoding]::new($false))
     }
     $windowsArchive = Join-Path $projectRoot "dist/AutoCheckIn-$Version-windows-amd64.zip"
     $linuxArchive = Join-Path $projectRoot "dist/auto-check-in-$Version-linux-amd64.tar.gz"
-    Compress-Archive -Path (Join-Path $windowsOutput '*') -DestinationPath $windowsArchive -Force
-    Invoke-Checked 'tar.exe' @('-czf', $linuxArchive, '-C', $linuxOutput, '.')
+    # Explicit members prevent stale documentation, license directories or local
+    # data in dist from entering a subsequent release.
+    $windowsFiles = @('AutoCheckIn.exe', 'checkin-server.exe', 'README.md', 'THIRD_PARTY_NOTICES.md')
+    $linuxFiles = @('checkin-server', 'README.md', 'THIRD_PARTY_NOTICES.md')
+    $windowsPaths = $windowsFiles | ForEach-Object { Join-Path $windowsOutput $_ }
+    Compress-Archive -LiteralPath $windowsPaths -DestinationPath $windowsArchive -Force
+    $env:GOOS = (& $Go env GOHOSTOS).Trim()
+    $env:GOARCH = (& $Go env GOHOSTARCH).Trim()
+    Invoke-Checked $Go (@('run', './build/archive', '-source', $linuxOutput,
+        '-output', $linuxArchive, '-executable', 'checkin-server') + $linuxFiles)
     Get-FileHash -Algorithm SHA256 -LiteralPath $windowsArchive, $linuxArchive |
         ForEach-Object { $_.Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($_.Path) } |
         Set-Content -LiteralPath (Join-Path $projectRoot 'dist/SHA256SUMS.txt') -Encoding ascii
