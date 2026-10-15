@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -62,7 +63,19 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 	}
 	if err != nil {
 		process.Close()
-		return nil, err
+		return nil, f.startupError(ctx, "浏览器进程初始化", err)
 	}
 	return process, nil
+}
+
+func (f *Factory) startupError(ctx context.Context, stage string, err error) error {
+	if cause := ctx.Err(); cause != nil {
+		return cause
+	}
+	if cause := f.lifetime.Err(); cause != nil {
+		return cause
+	}
+	// An internal initialization watchdog is a retryable startup failure, not
+	// a user-requested shutdown. No site operation has been sent at this stage.
+	return fmt.Errorf("%s失败：%v", stage, err)
 }

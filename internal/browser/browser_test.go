@@ -13,6 +13,19 @@ import (
 	"time"
 )
 
+type diagnosticFactory struct {
+	factory *Factory
+	t       *testing.T
+}
+
+func (f diagnosticFactory) Open(ctx context.Context, site domain.Site, creds domain.Credentials) (port.Session, error) {
+	session, err := f.factory.Open(ctx, site, creds)
+	if err != nil {
+		f.t.Logf("browser %s could not open session: %v", f.factory.config.Executable, err)
+	}
+	return session, err
+}
+
 func TestRealBrowserAccountIsolationAndLogin(t *testing.T) {
 	if os.Getenv("CHECKIN_BROWSER_TEST") != "1" {
 		t.Skip("set CHECKIN_BROWSER_TEST=1 for real Chromium integration")
@@ -27,7 +40,7 @@ func TestRealBrowserAccountIsolationAndLogin(t *testing.T) {
 	site := domain.Templates()[2].Site
 	site.BaseURL = fixture.Server.URL
 	site.Transport = "browser"
-	runner := provider.Runner{Factory: transport.Factory{Browser: factory}}
+	runner := provider.Runner{Factory: transport.Factory{Browser: diagnosticFactory{factory, t}}}
 	for _, name := range []string{"alice", "bob"} {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		result, c := runner.Execute(ctx, site, domain.Credentials{Method: "password", Username: name, Password: "test-password"})

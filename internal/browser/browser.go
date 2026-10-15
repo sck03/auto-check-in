@@ -143,7 +143,7 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 	initTimer.Stop()
 	if err != nil {
 		s.Close()
-		return nil, err
+		return nil, f.startupError(ctx, "账号浏览器上下文初始化", err)
 	}
 	s.trackTabs()
 	s.listenLoginResponses(s.ctx)

@@ -12,6 +12,7 @@ concurrency:
 jobs:
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-26.04, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -29,6 +30,14 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      - name: Select Chromium for browser regression tests
+        shell: pwsh
+        run: |
+          $browser = if ($IsWindows) { 'C:/Program Files/Google/Chrome/Application/chrome.exe' } else { (Get-Command google-chrome).Source }
+          if (-not (Test-Path -LiteralPath $browser)) { throw 'Chromium browser not found on runner' }
+          "CHECKIN_BROWSER_PATH=$browser" >> $env:GITHUB_ENV
+          "CHECKIN_TEST_BROWSER_PATH=$browser" >> $env:GITHUB_ENV
+          Write-Output "Browser regression executable: $browser"
       - if: runner.os == 'Linux'
         run: go test -race ./internal/...
         env:
@@ -45,9 +54,6 @@ jobs:
           $binary = if ($IsWindows) { 'dist/checkin-server.exe' } else { 'dist/checkin-server' }
           go build -o $binary ./cmd/server
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $browser = if ($IsWindows) { 'C:/Program Files/Google/Chrome/Application/chrome.exe' } else { (Get-Command google-chrome).Source }
-          if (-not (Test-Path -LiteralPath $browser)) { throw 'Chromium browser not found on runner' }
-          "CHECKIN_TEST_BROWSER_PATH=$browser" >> $env:GITHUB_ENV
       - run: npm run test:e2e
         working-directory: web
         env:
