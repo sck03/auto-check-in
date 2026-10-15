@@ -13,11 +13,11 @@
 | R05 | 凭据加密、账号隔离、API 鉴权、加密备份 | security / store / httpapi | 已完成，篡改/错误口令/回滚/读回脱敏通过 |
 | R06 | 登录失效/验证码的人工处理入口 | browser / app / web | 已完成，真实 Chromium 登录和保存会话通过 |
 | R07 | 奖励与余额分开、历史记录 | provider / store / web | 已完成，奖励字段与余额变化独立验证 |
-| R08 | Windows 程序与 Docker 共用核心 | cmd / Dockerfile / scripts | Windows 成品与 Linux 交叉构建完成；容器交由 GitHub 验证 |
+| R08 | Windows 程序与 Docker 共用核心 | cmd / Dockerfile / scripts | Windows 成品、Linux 构建和 GitHub 实际容器验证通过 |
 | R09 | 架构、运维、扩展文档与测试证据 | docs / tests | 已完成，文档按最终方案修订 |
 | R10 | 托盘、自启动、八项右键菜单 | desktop / DesktopSettings | 已完成，实际 Windows 程序验证通过 |
 | R11 | 空闲资源、流畅性和稳定性 | browser/pool / app/engine / web | 已完成，共享进程隔离、取消和回收测试通过 |
-| R12 | GitHub 最新稳定 Actions、Windows/Docker 产物与发布 | .github/workflows / scripts | 已配置完整 SHA 固定版本；见在线运行结果 |
+| R12 | GitHub 最新稳定 Actions、Windows/Docker 产物与发布 | .github/workflows / scripts | 已配置完整 SHA 固定版本，Verify 全部通过；版本产物见 Releases |
 
 ## 本地验收结果
 
@@ -37,6 +37,8 @@
 
 ## 在线构建与发布
 
+首轮完整远端验收：[Verify #38698044432](https://github.com/sck03/auto-check-in/actions/runs/38698044432)，Windows、Linux、container 三个 job 全部成功，对应实现提交 3a5f15d。容器测试包含真正的 Chromium 密码登录、签到、奖励判断和重启后的去重。
+
 - [Verify 运行记录](https://github.com/sck03/auto-check-in/actions/workflows/ci.yml)：包含实际 Docker Chromium 登录、签到与重启验证。
 - [Release 运行记录](https://github.com/sck03/auto-check-in/actions/workflows/release.yml)：Windows ZIP、Linux 服务包、GHCR 双架构镜像及 amd64 Docker 离线包。
 - [GitHub Releases](https://github.com/sck03/auto-check-in/releases)：构建与容器检查通过后才发布下载文件。
@@ -51,4 +53,4 @@
 
 ## 外部验收
 
-真实站点账号、当前线上验证策略及奖励到账尚未验证；需要使用用户自己的账号逐站点验收。当前本地环境没有 Docker 引擎，容器实际运行验证由 GitHub 工作流完成，以在线结果为准，不能用 Linux 交叉编译替代。Windows 自动启动尚未经过整机注销/重启测试。
+真实站点账号、当前线上验证策略及奖励到账尚未验证；需要使用用户自己的账号逐站点验收。本地没有 Docker 引擎，已使用 GitHub 工作流完成实际容器测试。Windows 自动启动尚未经过整机注销/重启测试。

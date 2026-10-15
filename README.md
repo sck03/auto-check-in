@@ -47,7 +47,7 @@ docker compose exec checkin sh -c 'cat /data/access.token'
 
 打开 `http://127.0.0.1:18990`，输入上一步在运行设备上读取的管理访问令牌。数据保存在 `checkin-data` 命名卷。若需局域网访问，可在 `.env` 中设置 `CHECKIN_BIND_IP=0.0.0.0`；公网部署应由 HTTPS 反向代理提供入口。
 
-容器包含 Chromium，人工登录通过管理页面完成，无需开放 CDP/VNC。当前开发环境没有 Docker 引擎，Docker 运行仍是待验收项；配方和验证命令已提供，不以交叉编译冒充容器验证。
+容器包含 Chromium，人工登录通过管理页面完成，无需开放 CDP/VNC。已通过 GitHub 中的实际容器启动、Chromium 登录/签到和重启持久化测试，详细记录见 [进度与验收](docs/progress.md)。
 
 ## 构建与测试
 
