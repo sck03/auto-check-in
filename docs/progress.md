@@ -19,8 +19,8 @@
 | R11 | 空闲资源、流畅性和稳定性 | browser/pool / app/engine / web | 已完成，共享进程隔离、取消和回收测试通过 |
 | R12 | GitHub 最新稳定 Actions、Windows/Docker 产物与发布 | .github/workflows / scripts | 已配置完整 SHA 固定版本，Verify 全部通过；版本产物见 Releases |
 | R13 | 精简发布包、保留完整许可、固定 Ubuntu 26.04 | build/archive / scripts / .github | v1.0.1 已发布，Ubuntu 26.04 Verify / Release 全部通过 |
-| R14 | 登录卡顿、OAuth 新页及四种登录方式验证 | browser/tabs / interactive / BrowserDialog | v1.0.2 本地 Chromium、竞态、网页 E2E 与 Windows 成品测试通过，在线发布待验证 |
-| R15 | 登录状态覆盖、取消启动残留、刷新并发与输入积压 | browser/process / app/login / web | 全量竞态、7 组网页回归、可见 OAuth 及 Windows 成品资源释放验证通过，在线 CI 待验证 |
+| R14 | 登录卡顿、OAuth 新页及四种登录方式验证 | browser/tabs / interactive / BrowserDialog | v1.0.2 已发布，本地验收、三项 CI、发布包重新下载实测全部通过 |
+| R15 | 登录状态覆盖、取消启动残留、刷新并发与输入积压 | browser/process / app/login / web | 全量竞态、7 组网页回归、可见 OAuth、Windows 成品资源释放及在线 CI 通过 |
 
 ## 本地验收结果
 
@@ -45,6 +45,12 @@
 2026-10-15 的高延迟回归：每次输入请求人为增加 200 ms 延迟，同样 29 个字符由修复前的 29 次请求合并为 4 次，减少约 86%。测试同时核对输入内容、跨输入框顺序及会话保存；该数字衡量请求数，不代表所有网站的整体速度提升比例。
 
 ## 在线构建与发布
+
+**[v1.0.2 已发布](https://github.com/sck03/auto-check-in/releases/tag/v1.0.2)**：[Verify #38714753128](https://github.com/sck03/auto-check-in/actions/runs/38714753128) 的 Windows、Ubuntu 26.04 和 container 全部通过，对应代码提交 `57a80b4`。首轮自动探测浏览器时出现初始化超时，前后端改为明确指定 Chrome 后通过；启动失败与正常退出分别归类。两个系统均运行 7 组网页回归。[Release #38715409711](https://github.com/sck03/auto-check-in/actions/runs/38715409711) 的 version、windows、docker、publish 全部成功。
+
+已核对三个程序/镜像包的 SHA-256 清单与 GitHub 资产摘要。重新下载的 Windows ZIP 为 `a01a15420ee78ee3e15d47c87fde9f11ae71d5e711ede5d032d8912ab4311590`，仅含两个程序、简短 README 和合并许可；对下载包再次执行托盘、开机开关、独立登录窗口、取消后资源释放和正常退出测试，全部通过。Linux 程序执行权限与版本由发布流程检查通过。
+
+GHCR `1.0.2` 镜像索引包含 linux/amd64 和 linux/arm64，已验证匿名读取；索引摘要为 `sha256:8f752f2e1ebdbde153e1bcc5b43de253d504f162f3ce9f2ef724542a7b364f24`。Windows ZIP 约 12 MB，Docker 离线包约 376 MB。
 
 **v1.0.1 已发布**：[Verify #38703736992](https://github.com/sck03/auto-check-in/actions/runs/38703736992) 和 [Release #38704107828](https://github.com/sck03/auto-check-in/actions/runs/38704107828) 全部通过；Linux job 固定为 Ubuntu 26.04，新运行没有迁移警告。程序包不再带 docs/licenses 目录，完整第三方许可保留在单个声明文件；发布前已核对归档文件清单、SHA-256 和 Linux 程序执行权限。
 
