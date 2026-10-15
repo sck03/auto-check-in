@@ -17,7 +17,7 @@ await new Promise(resolve => probe.close(resolve))
 await mkdir(path.join(root, 'artifacts'), { recursive: true })
 const data = await mkdtemp(path.join(root, 'artifacts', 'native-'))
 const token = 'native-smoke-test-token-not-for-production'
-const app = spawn(path.join(root, 'dist/AutoCheckIn.exe'), [], {
+const app = spawn(process.env.SMOKE_DESKTOP_EXE || path.join(root, 'dist/AutoCheckIn.exe'), [], {
   env: { ...process.env, CHECKIN_DATA_DIR: data, CHECKIN_ACCESS_TOKEN: token,
     CHECKIN_DESKTOP_TEST_PORT: String(port), CHECKIN_TEST_STARTUP_FILE: path.join(data, 'test-startup') },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],

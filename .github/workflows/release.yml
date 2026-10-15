@@ -132,8 +132,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: desktop-and-server
           path: release
-          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: docker-offline
+          path: release
       - name: Merge checksum files
         run: |
           cat release/SHA256SUMS.txt release/DOCKER-SHA256SUMS.txt > release/ALL-SHA256SUMS.txt

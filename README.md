@@ -2,6 +2,10 @@
 
 一个面向个人使用的多站点、多账号自动签到工具。Go 核心、Vue 3 界面、SQLite 存储；Windows 独立应用窗口和 Docker 网页共用一套业务逻辑。
 
+**v1.0.0 成品：** [Windows 下载](https://github.com/sck03/auto-check-in/releases/download/v1.0.0/AutoCheckIn-1.0.0-windows-amd64.zip) · [Docker 离线镜像](https://github.com/sck03/auto-check-in/releases/download/v1.0.0/auto-check-in-1.0.0-docker-linux-amd64.tar.gz) · [全部产物与校验和](https://github.com/sck03/auto-check-in/releases/tag/v1.0.0)
+
+镜像：`docker pull ghcr.io/sck03/auto-check-in:1.0.0`（linux/amd64、linux/arm64，已验证匿名拉取）。
+
 ## 已实现
 
 - 站点与账号管理，内置 Any Router、Agent Router，支持 New API 兼容站点和 CSS 页面签到。

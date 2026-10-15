@@ -39,6 +39,12 @@
 
 首轮完整远端验收：[Verify #38698044432](https://github.com/sck03/auto-check-in/actions/runs/38698044432)，Windows、Linux、container 三个 job 全部成功，对应实现提交 3a5f15d。容器测试包含真正的 Chromium 密码登录、签到、奖励判断和重启后的去重。
 
+**v1.0.0 已发布**：[Release #38698942047](https://github.com/sck03/auto-check-in/actions/runs/38698942047) 的 version、windows、docker、publish 全部成功；对应代码提交 9e4aa8c。[该提交 Verify](https://github.com/sck03/auto-check-in/actions/runs/38698934900) 也全部成功。
+
+已核对三个下载产物的 SHA-256 与 GitHub 资产摘要一致，确认 GHCR 可匿名拉取且包含 linux/amd64、linux/arm64。镜像索引摘要为 `sha256:21ec11d9348f4849232195866069b7228cda25049776248c1357ccb373364c79`。Windows ZIP 约 12 MB，Docker 离线包约 400 MB。
+
+已重新下载 GitHub 发布的 Windows ZIP，校验实际下载文件的 SHA-256，并对包内程序再次运行原生窗口/托盘全流程测试，结果通过。正式 Release 仅保留三个程序/镜像包与校验和文件，构建调试记录保留在 Actions 内。
+
 - [Verify 运行记录](https://github.com/sck03/auto-check-in/actions/workflows/ci.yml)：包含实际 Docker Chromium 登录、签到与重启验证。
 - [Release 运行记录](https://github.com/sck03/auto-check-in/actions/workflows/release.yml)：Windows ZIP、Linux 服务包、GHCR 双架构镜像及 amd64 Docker 离线包。
 - [GitHub Releases](https://github.com/sck03/auto-check-in/releases)：构建与容器检查通过后才发布下载文件。
