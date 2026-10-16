@@ -19,6 +19,7 @@ export interface Site {
   id: string
   name: string
   base_url: string
+  template_id: string
   adapter: 'newapi' | 'anyrouter' | 'agentrouter' | 'browser' | 'x666'
   transport: 'http' | 'browser'
   login_path: string

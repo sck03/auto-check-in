@@ -7,9 +7,8 @@ import ScheduleFields from './ScheduleFields.vue'
 import Icon from './Icon.vue'
 const props = defineProps<{ account: Account | null; sites: Site[]; templates: Template[] }>()
 const emit = defineEmits<{ close: []; saved: [] }>()
-const copy = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
 const selected = props.sites.find((s) => s.id === props.account?.site_id) || props.sites[0]
-const defaults = props.templates.find((t) => t.id === selected?.adapter) || props.templates[0]
+const defaults = props.templates.find((t) => t.id === selected?.template_id) || props.templates[0]
 const form = reactive({
   name: props.account?.name || '',
   site_id: selected?.id || '',
@@ -23,28 +22,27 @@ const form = reactive({
   cookie_header: '',
   token: '',
   clear_session: false,
-  schedule: copy(props.account?.schedule || defaults.schedule),
+  schedule: { ...(props.account?.schedule || defaults.schedule) },
 })
 const site = computed(() => props.sites.find((s) => s.id === form.site_id))
 const busy = ref(false),
   error = ref('')
 function changeSite() {
-  const template = props.templates.find((t) => t.id === site.value?.adapter)
-  if (template) form.schedule = copy(template.schedule)
+  const template = props.templates.find((t) => t.id === site.value?.template_id)
+  if (template) form.schedule = { ...template.schedule }
   form.method = site.value?.adapter === 'agentrouter' ? 'github' : 'cookie'
 }
 async function save() {
   busy.value = true
   error.value = ''
   try {
-    const credentials: CredentialPatch = {
-      method: form.method,
-      username: form.username,
-      api_user: form.api_user,
-    }
+    const credentials: CredentialPatch = { method: form.method }
+    if (form.username !== (props.account?.auth.username || '')) credentials.username = form.username
+    if (form.api_user !== (props.account?.auth.api_user || '')) credentials.api_user = form.api_user
     if (form.password) credentials.password = form.password
     if (form.cookie_header || form.clear_session) credentials.cookie_header = form.cookie_header
-    if (form.token) credentials.token = form.token
+    if (form.token || form.clear_session) credentials.token = form.token
+    if (form.clear_session && credentials.api_user === undefined) credentials.api_user = ''
     const body: AccountInput = {
       name: form.name,
       site_id: form.site_id,
@@ -107,7 +105,7 @@ async function save() {
         userToken。每日免费抽奖奖励直接到账，无需手动兑换。
       </div>
       <div v-if="site?.adapter === 'agentrouter'" class="notice info">
-        Agent Router 通过重新登录领取签到奖励，请使用密码或 OAuth 登录。首次 OAuth
+        AgentRouter 通过重新登录领取签到奖励，请使用密码或 OAuth 登录。首次 OAuth
         登录需要在“浏览器登录”中完成授权。
       </div>
       <div v-if="form.method === 'password'" class="field-grid">

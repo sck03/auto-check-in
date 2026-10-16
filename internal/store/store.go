@@ -74,10 +74,10 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 3 {
+	if version > 4 {
 		return fmt.Errorf("数据库版本 %d 高于当前程序支持的版本", version)
 	}
-	if version == 3 {
+	if version == 4 {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -100,15 +100,52 @@ AND json_extract(schedule,'$.retry_until')='09:30'`, millis(time.Now())); err !=
 		if err = createSchema(tx); err != nil {
 			return err
 		}
+	} else if err = upgradeSiteTemplates(tx); err != nil {
+		return err
 	}
 	// Queue polling and daily budgets must not scan years of completed history.
 	if _, err = tx.Exec(`
 CREATE INDEX IF NOT EXISTS queued_runs ON runs(created_at,id) WHERE status='queued';
 CREATE INDEX IF NOT EXISTS daily_checkin_attempts ON runs(account_id,started_at) WHERE action='checkin';
-PRAGMA user_version=3;`); err != nil {
+PRAGMA user_version=4;`); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func upgradeSiteTemplates(tx *sql.Tx) error {
+	rows, err := tx.Query("SELECT config FROM sites")
+	if err != nil {
+		return err
+	}
+	var changed []domain.Site
+	for rows.Next() {
+		var raw string
+		var site domain.Site
+		if err = rows.Scan(&raw); err == nil {
+			err = json.Unmarshal([]byte(raw), &site)
+		}
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		if site.TemplateID == "" {
+			site.NormalizeTemplate()
+			site.Version++
+			changed = append(changed, site)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, site := range changed {
+		if _, err = tx.Exec("UPDATE sites SET config=? WHERE id=?", jsonText(site), site.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func createSchema(tx *sql.Tx) error {
@@ -143,8 +180,11 @@ CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), config TEXT NOT NULL);
 	if _, err = tx.Exec("INSERT INTO settings VALUES(1,?)", jsonText(settings)); err != nil {
 		return err
 	}
-	for _, t := range domain.Templates()[:2] {
+	for _, t := range domain.Templates() {
 		site := t.Site
+		if site.ID == "" {
+			continue
+		}
 		site.Version = 1
 		if _, err = tx.Exec("INSERT INTO sites(id,config) VALUES(?,?)", site.ID, jsonText(site)); err != nil {
 			return err
@@ -224,6 +264,11 @@ func (s *Store) SaveSite(ctx context.Context, site domain.Site) (domain.Site, er
 	}
 	defer tx.Rollback()
 	old, err := getSite(ctx, tx, site.ID)
+	if site.TemplateID == "" && site.Adapter == old.Adapter {
+		// Older clients omit this field; preserve the saved template on edits.
+		site.TemplateID = old.TemplateID
+	}
+	site.NormalizeTemplate()
 	if errors.Is(err, domain.ErrNotFound) {
 		if site.Version != 0 {
 			return site, domain.ErrConflict
@@ -234,20 +279,29 @@ func (s *Store) SaveSite(ctx context.Context, site domain.Site) (domain.Site, er
 		if old.Version != site.Version {
 			return site, domain.ErrConflict
 		}
-		var active int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs r JOIN accounts a ON a.id=r.account_id WHERE a.site_id=? AND r.status IN ('queued','running','waiting_user')`, site.ID).Scan(&active); err != nil {
+		var active bool
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM runs r JOIN accounts a ON a.id=r.account_id WHERE a.site_id=? AND r.status IN ('queued','running','waiting_user'))`, site.ID).Scan(&active); err != nil {
 			return site, err
 		}
-		if active > 0 {
+		if active {
 			return site, domain.ErrBusy
 		}
-		if old.BaseURL != site.BaseURL || old.Adapter != site.Adapter {
-			var count int
-			if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM accounts WHERE site_id=?", site.ID).Scan(&count); err != nil {
+		if old.BaseURL != site.BaseURL || old.Adapter != site.Adapter || old.TemplateID != site.TemplateID {
+			var attached bool
+			if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM accounts WHERE site_id=?)", site.ID).Scan(&attached); err != nil {
 				return site, err
 			}
-			if count > 0 {
-				return site, fmt.Errorf("%w：已有账号的站点不能更换地址或适配器", domain.ErrConflict)
+			if attached {
+				return site, fmt.Errorf("%w：已有账号的站点不能更换地址或平台模板", domain.ErrConflict)
+			}
+		}
+		if old.Transport != site.Transport && site.Transport == "http" {
+			var oauth bool
+			if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE site_id=? AND json_extract(auth,'$.method') IN ('github','linuxdo'))`, site.ID).Scan(&oauth); err != nil {
+				return site, err
+			}
+			if oauth {
+				return site, fmt.Errorf("%w：此站点的 OAuth 账号需要浏览器执行方式", domain.ErrConflict)
 			}
 		}
 		site.Version++

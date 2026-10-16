@@ -2,6 +2,17 @@ package domain
 
 import "testing"
 
+func TestStorageOnlySessionIsRecognized(t *testing.T) {
+	c := Credentials{Method: "cookie", Storage: map[string]map[string]string{"https://site.test": {"session": "saved"}}}
+	if !c.Summary().HasSession {
+		t.Fatal("a saved page session was shown as missing")
+	}
+	c.Storage["https://site.test"] = map[string]string{}
+	if c.Summary().HasSession {
+		t.Fatal("empty browser storage was counted as a login session")
+	}
+}
+
 func TestChangingIdentityClearsOldSession(t *testing.T) {
 	c := Credentials{Method: "password", Username: "old", Password: "old-password", APIUser: "old-id", Token: "old-token", CookieHeader: "session=old", Cookies: []Cookie{{Name: "session", Value: "old"}}, Storage: map[string]map[string]string{"https://site.test": {"user": "old"}}}
 	name := "new"

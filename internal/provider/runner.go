@@ -43,7 +43,7 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 		return domain.Result{Status: domain.NeedsAttention, Message: "未注册的站点适配器"}, nil
 	}
 	if adapter.RequiresFreshLogin && c.Method == "cookie" {
-		return domain.Result{Status: domain.NeedsAttention, Message: "Agent Router 需要重新登录触发签到；请选择密码或 OAuth 登录方式", Evidence: "login_required"}, nil
+		return domain.Result{Status: domain.NeedsAttention, Message: "AgentRouter 需要重新登录触发签到；请选择密码或 OAuth 登录方式", Evidence: "login_required"}, nil
 	}
 	if site.Adapter == "anyrouter" || site.Adapter == "agentrouter" {
 		now := time.Now()

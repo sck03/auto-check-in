@@ -30,6 +30,12 @@ func (s *Site) Validate(allowHTTP bool) error {
 	default:
 		return fmt.Errorf("不支持的站点适配器")
 	}
+	if s.TemplateID != "" {
+		template, ok := TemplateByID(s.TemplateID)
+		if !ok || template.Site.Adapter != s.Adapter {
+			return fmt.Errorf("平台模板与站点适配器不匹配")
+		}
+	}
 	if s.Transport != "http" && s.Transport != "browser" {
 		return fmt.Errorf("执行方式必须是 http 或 browser")
 	}

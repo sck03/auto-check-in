@@ -163,7 +163,7 @@ test('站点和账号管理、签到结果、每日防重复、编辑保留凭�
   await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('WONG')
   await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('https://wzw.pp.ua')
   await page.getByLabel('平台模板').selectOption('x666')
-  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('薄荷 API 每日签到')
+  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('薄荷 API')
   await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('https://up.x666.me')
   await page.getByLabel('平台模板').selectOption('newapi')
   await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('')
@@ -204,6 +204,127 @@ test('站点和账号管理、签到结果、每日防重复、编辑保留凭�
   await selectNav(page, '账号签到')
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: path.join(root, 'artifacts/ui-mobile.png'), fullPage: true })
+  expect(errors).toEqual([])
+})
+
+test('六个平台模板分组清晰，修改地址和重新编辑后保持模板身份', async ({ page }) => {
+  await selectNav(page, '站点管理')
+  await page.getByRole('button', { name: '添加站点', exact: true }).click()
+  const templates = page.getByLabel('平台模板')
+  await expect(templates.locator('optgroup')).toHaveCount(2)
+  await expect(templates.locator('option')).toHaveText([
+    'AnyRouter',
+    'AgentRouter',
+    'WONG',
+    '薄荷 API',
+    'New API',
+    '自定义网页签到',
+  ])
+  for (const [id, name, base, transport] of [
+    ['anyrouter', 'AnyRouter', 'https://anyrouter.top', 'browser'],
+    ['agentrouter', 'AgentRouter', 'https://agentrouter.org', 'browser'],
+    ['x666', '薄荷 API', 'https://up.x666.me', 'browser'],
+    ['newapi', 'New API', '', 'http'],
+    ['browser', '自定义网页签到', '', 'browser'],
+    ['wong', 'WONG', 'https://wzw.pp.ua', 'browser'],
+  ]) {
+    await templates.selectOption(id)
+    await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue(name)
+    await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue(base)
+    await expect(page.getByLabel('执行方式')).toHaveValue(transport)
+  }
+  await page.getByLabel('站点名称', { exact: true }).fill('我的 WONG 镜像')
+  await page.getByLabel('站点地址', { exact: true }).fill(siteURL)
+  await page.screenshot({
+    path: path.join(root, 'artifacts/ui-site-templates.png'),
+    fullPage: true,
+  })
+  await page.getByRole('button', { name: '保存站点' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.reload()
+  await selectNav(page, '站点管理')
+  const card = page
+    .locator('.site-card')
+    .filter({ has: page.getByRole('heading', { name: '我的 WONG 镜像' }) })
+  await expect(card.locator('.tag')).toHaveText('WONG')
+  await card.getByRole('button', { name: '编辑站点' }).click()
+  await expect(templates).toHaveValue('wong')
+  await expect(templates).toBeEnabled()
+  await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue(siteURL)
+  // An unused site can change templates while retaining its custom name and URL.
+  await templates.selectOption('newapi')
+  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('我的 WONG 镜像')
+  await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue(siteURL)
+  await expect(page.getByLabel('执行方式')).toHaveValue('http')
+  await page.getByRole('button', { name: '保存站点' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(card.locator('.tag')).toHaveText('New API')
+  expect(
+    (await api('/sites')).find((site: any) => site.name === '我的 WONG 镜像').template_id,
+  ).toBe('newapi')
+  expect(errors).toEqual([])
+})
+
+test('已有 OAuth 账号的站点保留浏览器执行方式', async ({ page }) => {
+  const account = await seedAccount('OAuth 账号', false)
+  const site = (await api('/sites')).find((site: any) => site.id === account.site_id)
+  await api('/sites/' + site.id, 'PUT', { ...site, transport: 'browser' })
+  await api('/accounts/' + account.id, 'PUT', {
+    name: account.name,
+    site_id: account.site_id,
+    enabled: true,
+    schedule: account.schedule,
+    version: account.version,
+    credentials: { method: 'github' },
+  })
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await selectNav(page, '站点管理')
+  await page
+    .locator('.site-card')
+    .filter({ has: page.getByRole('heading', { name: '本地测试站' }) })
+    .getByRole('button', { name: '编辑站点' })
+    .click()
+  await expect(page.getByLabel('平台模板')).toBeDisabled()
+  await expect(page.getByLabel('执行方式')).toHaveValue('browser')
+  await expect(page.getByLabel('执行方式').locator('option[value="http"]')).toHaveJSProperty(
+    'disabled',
+    true,
+  )
+  await expect(page.getByText('此站点的 OAuth 账号需要浏览器执行方式。')).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('清除旧会话会清除 Token 和用户 ID，并保留登录密码', async ({ page }) => {
+  const account = await seedAccount('清理会话', false)
+  await api('/accounts/' + account.id, 'PUT', {
+    name: account.name,
+    site_id: account.site_id,
+    enabled: true,
+    schedule: account.schedule,
+    version: account.version,
+    credentials: {
+      method: 'password',
+      username: 'alice',
+      password: 'fixture-password',
+      api_user: 'alice',
+      cookie_header: 'session=alice',
+      token: 'old-fixture-token',
+    },
+  })
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await page.getByRole('button', { name: '编辑 清理会话', exact: true }).click()
+  await page.getByText('更多凭据选项', { exact: true }).click()
+  await page.getByLabel('清除旧会话，重新建立登录').check()
+  await page.getByRole('button', { name: '保存账号' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  const saved = (await api('/accounts')).find((entry: any) => entry.id === account.id)
+  expect(saved.auth).toMatchObject({
+    has_session: false,
+    has_token: false,
+    api_user: '',
+    has_password: true,
+    username: 'alice',
+  })
   expect(errors).toEqual([])
 })
 
@@ -382,12 +503,107 @@ test('保存站点时保留进行中的刷新之后的更新', async ({ page }) 
 })
 
 async function pauseWorkspacePolling(page: Page) {
-  // Isolate request counts from the unrelated five-second workspace refresh.
+  // Isolate request counts from workspace polling.
   await page.clock.install({ time: new Date('2026-10-16T00:00:00Z') })
   await page.clock.pauseAt(new Date('2026-10-16T00:01:00Z'))
   await page.reload()
   await expect(page.getByRole('heading', { name: '我的账号' })).toBeVisible()
 }
+
+test('空闲降低轮询频率，运行中及时刷新，隐藏界面停止轮询', async ({ page }) => {
+  const account = await seedAccount('轮询账号', false)
+  await pauseWorkspacePolling(page)
+  let count = 0
+  let running = false
+  await page.route('**/api/v1/accounts', async (route) => {
+    count++
+    await route.fulfill({
+      json: [
+        {
+          ...account,
+          active_run_id: running ? 'fixture-running' : '',
+          active_status: running ? 'running' : '',
+        },
+      ],
+    })
+  })
+  await page.clock.runFor(29900)
+  expect(count).toBe(0)
+  await page.clock.runFor(200)
+  await expect.poll(() => count).toBe(1)
+  await expect(page.getByRole('button', { name: '刷新数据' })).toBeEnabled()
+  running = true
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await expect(page.getByText('1 个任务进行中')).toBeVisible()
+  await expect(page.getByRole('button', { name: '刷新数据' })).toBeEnabled()
+  count = 0
+  await page.clock.runFor(5001)
+  await expect.poll(() => count).toBe(1)
+  await expect(page.getByRole('button', { name: '刷新数据' })).toBeEnabled()
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  count = 0
+  await page.clock.runFor(120000)
+  expect(count).toBe(0)
+  running = false
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  await expect.poll(() => count).toBe(1)
+  await expect(page.getByRole('button', { name: '刷新数据' })).toBeEnabled()
+  await expect(page.getByText('所有任务状态已同步')).toBeVisible()
+  await page.clock.runFor(29900)
+  expect(count).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('打开的执行详情随任务结果刷新', async ({ page }) => {
+  await pauseWorkspacePolling(page)
+  let finished = false
+  await page.route('**/api/v1/runs?*', async (route) => {
+    const status = finished ? 'succeeded' : 'running'
+    await route.fulfill({
+      json: {
+        total: 1,
+        items: [
+          {
+            id: 'live-detail',
+            account_id: 'fixture',
+            account_name: '详情账号',
+            site_name: '测试站',
+            action: 'checkin',
+            trigger: 'manual',
+            status,
+            attempt: 1,
+            created_at: '2026-10-16T00:00:00Z',
+            started_at: '2026-10-16T00:00:00Z',
+            finished_at: finished ? '2026-10-16T00:00:10Z' : null,
+            result: {
+              status,
+              message: finished ? '签到结果已确认' : '正在执行签到',
+              unit: 'USD',
+              quota_per_unit: 500000,
+              reward: finished ? 250000 : null,
+            },
+          },
+        ],
+      },
+    })
+  })
+  await selectNav(page, '执行记录')
+  await page.getByRole('button', { name: '查看记录 详情账号' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByText('正在执行签到', { exact: true })).toBeVisible()
+  finished = true
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(dialog.getByText('签到结果已确认', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('已完成', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('$0.5', { exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
 
 test('记录筛选重置分页时只发送一次查询', async ({ page }) => {
   await pauseWorkspacePolling(page)

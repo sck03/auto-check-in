@@ -12,9 +12,9 @@ import (
 	"auto-check-in/internal/domain"
 )
 
-const accountColumns = `a.id,a.site_id,a.name,a.enabled,a.schedule,a.auth,a.version,a.created_at,a.updated_at,a.next_run_at,a.last_run_at,a.last_success_at,a.last_status,a.last_message,
-COALESCE((SELECT id FROM runs WHERE account_id=a.id AND status IN ('queued','running','waiting_user')),''),
-COALESCE((SELECT status FROM runs WHERE account_id=a.id AND status IN ('queued','running','waiting_user')),'')`
+const accountSelect = `SELECT a.id,a.site_id,a.name,a.enabled,a.schedule,a.auth,a.version,a.created_at,a.updated_at,a.next_run_at,a.last_run_at,a.last_success_at,a.last_status,a.last_message,
+COALESCE(r.id,''),COALESCE(r.status,'')
+FROM accounts a LEFT JOIN runs r ON r.account_id=a.id AND r.status IN ('queued','running','waiting_user')`
 
 func scanAccount(row scanner) (domain.Account, error) {
 	var a domain.Account
@@ -38,13 +38,13 @@ func scanAccount(row scanner) (domain.Account, error) {
 	return a, nil
 }
 func getAccount(ctx context.Context, q queryer, id string) (domain.Account, error) {
-	return scanAccount(q.QueryRowContext(ctx, "SELECT "+accountColumns+" FROM accounts a WHERE a.id=?", id))
+	return scanAccount(q.QueryRowContext(ctx, accountSelect+" WHERE a.id=?", id))
 }
 func (s *Store) Account(ctx context.Context, id string) (domain.Account, error) {
 	return getAccount(ctx, s.db, id)
 }
 func (s *Store) Accounts(ctx context.Context) ([]domain.Account, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+accountColumns+" FROM accounts a ORDER BY a.created_at,a.id")
+	rows, err := s.db.QueryContext(ctx, accountSelect+" ORDER BY a.created_at,a.id")
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,13 @@ func (s *Store) SaveAccount(ctx context.Context, a domain.Account, c domain.Cred
 		return a, err
 	}
 	defer tx.Rollback()
-	if _, err = getSite(ctx, tx, a.SiteID); err != nil {
+	site, err := getSite(ctx, tx, a.SiteID)
+	if err != nil {
+		return a, err
+	}
+	// Recheck against the configuration held by this transaction. A site edit
+	// may have changed transport since the service validated the request.
+	if err = c.Validate(site); err != nil {
 		return a, err
 	}
 	old, err := getAccount(ctx, tx, a.ID)

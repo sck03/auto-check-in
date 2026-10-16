@@ -41,6 +41,8 @@ async function load() {
     })
     if (!current.signal.aborted) {
       page.value = data
+      if (detail.value)
+        detail.value = data.items.find((run) => run.id === detail.value?.id) || detail.value
       error.value = ''
     }
   } catch (e) {

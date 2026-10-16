@@ -37,7 +37,7 @@ func (s *Store) Export(ctx context.Context) (domain.Backup, error) {
 	if err != nil {
 		return out, err
 	}
-	rows, err = tx.QueryContext(ctx, "SELECT "+accountColumns+" FROM accounts a")
+	rows, err = tx.QueryContext(ctx, accountSelect)
 	if err != nil {
 		return out, err
 	}
@@ -116,6 +116,7 @@ func (s *Store) Restore(ctx context.Context, b domain.Backup) error {
 		return err
 	}
 	for _, site := range b.Sites {
+		site.NormalizeTemplate()
 		if _, err = tx.ExecContext(ctx, "INSERT INTO sites(id,config) VALUES(?,?)", site.ID, jsonText(site)); err != nil {
 			return mapError(err)
 		}

@@ -1,13 +1,14 @@
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, ref, shallowRef } from 'vue'
 import { ApiError, request, setDesktopMode } from '../api'
 import type { Account, Meta, Settings, Site, Template } from '../types'
 
 export function useWorkspace() {
-  const accounts = ref<Account[]>([])
-  const sites = ref<Site[]>([])
-  const settings = ref<Settings | null>(null)
-  const templates = ref<Template[]>([])
-  const meta = ref<Meta | null>(null)
+  // Server snapshots are replaced as a whole; forms own their editable copies.
+  const accounts = shallowRef<Account[]>([])
+  const sites = shallowRef<Site[]>([])
+  const settings = shallowRef<Settings | null>(null)
+  const templates = shallowRef<Template[]>([])
+  const meta = shallowRef<Meta | null>(null)
   const error = ref('')
   const authorized = ref(false)
   const fetching = ref(false)

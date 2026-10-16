@@ -11,7 +11,12 @@ const form = ref<Site | null>(null),
   busy = ref(false),
   error = ref('')
 const deleting = ref<Site | null>(null)
-const selectedTemplate = ref('newapi')
+const templateMap = computed(() => new Map(props.templates.map((t) => [t.id, t])))
+const templateGroups = computed(() => [
+  { label: '专用站点', items: props.templates.filter((t) => t.site.base_url) },
+  { label: '通用模板', items: props.templates.filter((t) => !t.site.base_url) },
+])
+const currentTemplate = computed(() => templateMap.value.get(form.value?.template_id || ''))
 const accountCounts = computed(() => {
   const counts = new Map<string, number>()
   for (const account of props.accounts)
@@ -20,49 +25,42 @@ const accountCounts = computed(() => {
 })
 const count = (id: string) => accountCounts.value.get(id) || 0
 const attached = computed(() => (form.value && !isNew.value ? count(form.value.id) : 0))
-const labels: Record<string, string> = {
-  anyrouter: 'Any Router',
-  agentrouter: 'Agent Router',
-  newapi: 'New API 兼容',
-  browser: '页面签到',
-  wong: 'WONG',
-  x666: '薄荷 API 每日签到',
-}
+const hasOAuth = computed(
+  () =>
+    !isNew.value &&
+    props.accounts.some(
+      (a) => a.site_id === form.value?.id && ['github', 'linuxdo'].includes(a.auth.method),
+    ),
+)
+const copySite = (site: Site): Site => ({ ...site, selectors: { ...site.selectors } })
 function add(template = 'newapi') {
-  const source = props.templates.find((t) => t.id === template) || props.templates[0]
-  selectedTemplate.value = source.id
-  form.value = JSON.parse(JSON.stringify(source.site))
-  if (form.value) {
-    form.value.id = ''
-    form.value.version = 0
-    form.value.name = source.site.name
-  }
+  const source = templateMap.value.get(template)
+  if (!source) return
+  form.value = { ...copySite(source.site), id: '', version: 0 }
   isNew.value = true
   error.value = ''
 }
 function edit(site: Site) {
-  selectedTemplate.value =
-    props.templates.find(
-      (t) => t.site.base_url === site.base_url && t.site.adapter === site.adapter,
-    )?.id || site.adapter
-  form.value = JSON.parse(JSON.stringify(site))
+  form.value = copySite(site)
   isNew.value = false
   error.value = ''
 }
 function templateChange(event: Event) {
-  const id = (event.target as HTMLSelectElement).value
-  if (!isNew.value) return
-  const previous = props.templates.find((t) => t.id === selectedTemplate.value)?.site
-  const name = form.value?.name || '',
-    base = form.value?.base_url || ''
-  add(id)
-  if (form.value) {
-    if (name && name !== previous?.name) form.value.name = name
-    if (!form.value.base_url && base !== previous?.base_url) form.value.base_url = base
+  const source = templateMap.value.get((event.target as HTMLSelectElement).value)
+  const old = form.value
+  if (!source || !old || attached.value) return
+  const previous = currentTemplate.value?.site
+  form.value = {
+    ...copySite(source.site),
+    id: old.id,
+    version: old.version,
+    name: old.name && old.name !== previous?.name ? old.name : source.site.name,
+    base_url: source.site.base_url || (old.base_url !== previous?.base_url ? old.base_url : ''),
   }
+  error.value = ''
 }
 async function save() {
-  if (!form.value) return
+  if (!form.value || busy.value) return
   busy.value = true
   error.value = ''
   try {
@@ -101,14 +99,16 @@ async function remove() {
       <h2>站点管理</h2>
       <p>同类站点使用模板，不同账号共享站点配置。</p>
     </div>
-    <button class="button primary" @click="add()"><Icon name="plus" />添加站点</button>
+    <button class="button primary" :disabled="!templates.length" @click="add()">
+      <Icon name="plus" />添加站点
+    </button>
   </div>
   <div v-if="error && !form" class="notice error" role="alert">{{ error }}</div>
   <div class="site-grid">
     <article v-for="site in sites" :key="site.id" class="panel site-card">
       <div class="site-card-top">
         <span class="site-icon" :class="site.adapter"><Icon name="globe" :size="24" /></span
-        ><span class="tag">{{ labels[site.adapter] }}</span>
+        ><span class="tag">{{ templateMap.get(site.template_id)?.site.name || site.adapter }}</span>
       </div>
       <h3>{{ site.name }}</h3>
       <a :href="site.base_url" target="_blank" rel="noopener noreferrer" class="site-url"
@@ -132,7 +132,7 @@ async function remove() {
         </button>
       </div>
     </article>
-    <button class="add-site-card" @click="add()">
+    <button class="add-site-card" :disabled="!templates.length" @click="add()">
       <Icon name="plus" :size="26" /><strong>接入更多站点</strong
       ><span>New API 模板或自定义页面流程</span>
     </button>
@@ -146,13 +146,15 @@ async function remove() {
     <form id="site-form" class="form-stack" @submit.prevent="save">
       <div v-if="error" class="notice error" role="alert">{{ error }}</div>
       <label
-        >平台模板<select :value="selectedTemplate" :disabled="!isNew" @change="templateChange">
-          <option v-for="template in templates" :key="template.id" :value="template.id">
-            {{ labels[template.id] }}
-          </option>
+        >平台模板<select :value="form.template_id" :disabled="!!attached" @change="templateChange">
+          <optgroup v-for="group in templateGroups" :key="group.label" :label="group.label">
+            <option v-for="template in group.items" :key="template.id" :value="template.id">
+              {{ template.site.name }}
+            </option>
+          </optgroup>
         </select></label
       >
-      <p class="field-help">{{ templates.find((t) => t.id === selectedTemplate)?.description }}</p>
+      <p class="field-help">{{ currentTemplate?.description }}</p>
       <label
         >站点名称<input
           v-model="form.name"
@@ -173,10 +175,11 @@ async function remove() {
       </p>
       <label
         >执行方式<select v-model="form.transport" :disabled="form.adapter === 'browser'">
-          <option value="http">HTTP 接口（轻量）</option>
+          <option value="http" :disabled="hasOAuth">HTTP 接口（轻量）</option>
           <option value="browser">浏览器（需要 Chrome / Edge / Chromium）</option>
         </select></label
       >
+      <p v-if="hasOAuth" class="field-help">此站点的 OAuth 账号需要浏览器执行方式。</p>
       <details class="advanced" :open="form.adapter === 'browser'">
         <summary>接口路径与页面选择器</summary>
         <div class="field-grid">

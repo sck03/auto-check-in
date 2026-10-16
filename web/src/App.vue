@@ -33,6 +33,8 @@ const attention = computed(
       ['needs_attention', 'unverified', 'interrupted'].includes(a.last_status),
     ).length,
 )
+const activeCount = computed(() => accounts.value.filter((a) => a.active_run_id).length)
+const siteCount = computed(() => new Set(accounts.value.map((a) => a.site_id)).size)
 const next = computed(() => {
   let earliest: string | undefined
   for (const account of accounts.value) {
@@ -42,13 +44,26 @@ const next = computed(() => {
   }
   return earliest
 })
-let interval = 0,
+let pollTimer = 0,
   toastTimer = 0
+let disposed = false
+function scheduleRefresh() {
+  clearTimeout(pollTimer)
+  if (disposed || booting.value || !authorized.value || document.visibilityState !== 'visible')
+    return
+  pollTimer = window.setTimeout(
+    () => void refresh(false),
+    activeCount.value && !error.value ? 5000 : 30000,
+  )
+}
 async function refresh(full: unknown = true) {
+  clearTimeout(pollTimer)
   try {
     await workspace.refresh(typeof full === 'boolean' ? full : true)
   } catch {
     /* Inline connection state is maintained by the workspace. */
+  } finally {
+    scheduleRefresh()
   }
 }
 async function signIn() {
@@ -72,6 +87,7 @@ function browserSaved() {
   notify('会话已保存，可返回账号列表查看计划或手动签到')
 }
 function logout() {
+  clearTimeout(pollTimer)
   if (browserInfo.value)
     void request('/sessions/' + browserInfo.value.id, 'DELETE', undefined, {
       timeoutMs: 12000,
@@ -81,23 +97,23 @@ function logout() {
   browserInfo.value = null
 }
 onMounted(async () => {
+  document.addEventListener('visibilitychange', visible)
   try {
     if (await initializeConnection()) await refresh()
   } catch (e) {
     error.value = (e as Error).message
   } finally {
     booting.value = false
+    scheduleRefresh()
   }
-  interval = window.setInterval(() => {
-    if (authorized.value && document.visibilityState === 'visible') void refresh(false)
-  }, 5000)
-  document.addEventListener('visibilitychange', visible)
 })
 function visible() {
-  if (document.visibilityState === 'visible' && authorized.value) void refresh()
+  clearTimeout(pollTimer)
+  if (document.visibilityState === 'visible' && authorized.value && !booting.value) void refresh()
 }
 onBeforeUnmount(() => {
-  clearInterval(interval)
+  disposed = true
+  clearTimeout(pollTimer)
   clearTimeout(toastTimer)
   document.removeEventListener('visibilitychange', visible)
 })
@@ -197,7 +213,7 @@ onBeforeUnmount(() => {
                 <strong>{{ accounts.length }}</strong
                 ><small>个</small><Icon name="grid" />
               </div>
-              <p>分布在 {{ new Set(accounts.map((a) => a.site_id)).size }} 个站点</p>
+              <p>分布在 {{ siteCount }} 个站点</p>
             </div>
             <div class="stat-card">
               <span>今日已完成</span>
@@ -263,11 +279,7 @@ onBeforeUnmount(() => {
         />
         <footer class="workspace-footer">
           <span>登录会话与执行结果保存在当前实例</span
-          ><span>{{
-            accounts.filter((a) => a.active_run_id).length
-              ? accounts.filter((a) => a.active_run_id).length + ' 个任务进行中'
-              : '所有任务状态已同步'
-          }}</span>
+          ><span>{{ activeCount ? activeCount + ' 个任务进行中' : '所有任务状态已同步' }}</span>
         </footer>
       </main>
     </div>

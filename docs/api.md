@@ -33,6 +33,14 @@
 | POST | `/desktop/action` | show / hide / minimize / quit / run_all / pause / open_data |
 | GET | `/diagnostics` | Go 堆、goroutine 与浏览器池计数；不包含凭据 |
 
+## 站点模板
+
+`GET /templates` 返回六种模板，显示名称统一读取 `site.name`：`anyrouter`（AnyRouter）、`agentrouter`（AgentRouter）、`wong`（WONG）、`x666`（薄荷 API）、`newapi`（New API）、`browser`（自定义网页签到）。有预设地址的模板归为专用站点，其余为通用模板。
+
+站点的 `template_id` 保存所选模板，`adapter` 决定实际协议；WONG 的 `template_id=wong`、`adapter=newapi`。更新地址或名称不会丢失模板标识。模板与适配器不匹配时拒绝保存。旧请求可省略 `template_id`：更新时沿用原模板，创建时按地址及适配器识别。数据库升级到版本 4 时补齐旧配置，备份也保留该字段。
+
+有账号引用时不能更换地址、适配器或平台模板；存在 OAuth 账号时不能切换到 HTTP。账号保存会在事务中再次检查当前站点配置，避免并发修改导致 OAuth 账号失去浏览器执行方式。
+
 ## 账号写入
 
 ```json
@@ -56,6 +64,8 @@
 ```
 
 `credentials` 为写入补丁。省略字段保留旧值，显式空字符串可清空；设置 `cookie_header` 会替换旧 Cookie 并清除旧浏览器存储。读取账号仅返回 `auth` 摘要，不返回密码、Cookie、Token。更新时携带读取到的 `version`；创建为 0。正在排队、执行或人工登录的账号禁止编辑和删除。
+
+界面的“清除旧会话”同时清空 Cookie、Token 和旧用户 ID，保留用户名与密码供重新登录；同次填写的新凭据优先保留。仅有 localStorage 的页面登录也计为已保存会话。
 
 登录会话描述包含 `native_window`。为 true 时，客户端显示独立窗口的操作说明，不轮询截图；`focus` 用于显示当前登录窗口。取消会先中断正在等待的浏览器操作；关闭独立浏览器后，服务会结束会话并释放容量。
 

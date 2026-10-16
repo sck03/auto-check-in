@@ -41,6 +41,7 @@ type Site struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
 	BaseURL      string    `json:"base_url"`
+	TemplateID   string    `json:"template_id"`
 	Adapter      string    `json:"adapter"`
 	Transport    string    `json:"transport"`
 	LoginPath    string    `json:"login_path"`
@@ -53,58 +54,6 @@ type Site struct {
 	Unit         string    `json:"unit"`
 	Selectors    Selectors `json:"selectors"`
 	Version      int64     `json:"version"`
-}
-
-type Template struct {
-	ID          string   `json:"id"`
-	Description string   `json:"description"`
-	Site        Site     `json:"site"`
-	Schedule    Schedule `json:"schedule"`
-}
-
-func Templates() []Template {
-	base := Site{
-		Adapter: "newapi", Transport: "http", LoginPath: "/login", LoginAPIPath: "/api/user/login",
-		CheckInPath: "/api/user/checkin", UserInfoPath: "/api/user/self",
-		UserHeader: "New-Api-User", QuotaPerUnit: 500000, Unit: "USD",
-		Selectors: Selectors{Username: `input[name="username"],input[name="email"],input[type="email"]`,
-			Password: `input[type="password"]`, Submit: `button[type="submit"]`,
-			GitHub:  `a[href*="/oauth/github"],button[data-provider="github"]`,
-			LinuxDO: `a[href*="/oauth/linuxdo"],button[data-provider="linuxdo"]`},
-	}
-	any := base
-	any.ID = "anyrouter"
-	any.Name = "Any Router"
-	any.BaseURL = "https://anyrouter.top"
-	any.Adapter = "anyrouter"
-	any.Transport = "browser"
-	any.CheckInPath = ""
-	agent := base
-	agent.ID = "agentrouter"
-	agent.Name = "Agent Router"
-	agent.BaseURL = "https://agentrouter.org"
-	agent.Adapter = "agentrouter"
-	agent.Transport = "browser"
-	agent.CheckInPath = ""
-	page := base
-	page.Adapter = "browser"
-	page.Transport = "browser"
-	page.CheckInPath = "/"
-	wong := base
-	wong.Name, wong.BaseURL, wong.Transport = "WONG", "https://wzw.pp.ua", "browser"
-	mint := base
-	mint.Name, mint.BaseURL, mint.Adapter = "薄荷 API 每日签到", "https://up.x666.me", "x666"
-	mint.Transport, mint.LoginPath, mint.LoginAPIPath = "browser", "/", "/api/auth/login"
-	mint.CheckInPath, mint.UserInfoPath = "/api/checkin/spin", "/api/checkin/status"
-	mint.QuotaPerUnit, mint.Unit = 500, "次"
-	return []Template{
-		{ID: "anyrouter", Description: "北京时间 08:00 后访问或刷新已登录页面，无需点击签到", Site: any, Schedule: DefaultSchedule()},
-		{ID: "agentrouter", Description: "重新登录触发签到，需密码或已授权的 OAuth 会话", Site: agent, Schedule: DefaultSchedule()},
-		{ID: "newapi", Description: "支持签到的 New API / One API 衍生站，接口可调整", Site: base, Schedule: DefaultSchedule()},
-		{ID: "browser", Description: "通过 CSS 选择器点击签到并核验页面结果", Site: page, Schedule: DefaultSchedule()},
-		{ID: "wong", Description: "WONG 每日签到，使用 New API 签到接口并复核今日状态", Site: wong, Schedule: DefaultSchedule()},
-		{ID: "x666", Description: "薄荷 API 在 up.x666.me 每日免费抽奖签到，奖励直接到账；先在此页面用 LinuxDO 登录并保存会话", Site: mint, Schedule: DefaultSchedule()},
-	}
 }
 
 type Cookie struct {
@@ -182,7 +131,14 @@ type AuthSummary struct {
 }
 
 func (c Credentials) Summary() AuthSummary {
-	return AuthSummary{c.Method, c.Username, c.APIUser, c.Password != "", c.CookieHeader != "" || len(c.Cookies) > 0, c.Token != ""}
+	hasSession := c.CookieHeader != "" || len(c.Cookies) > 0
+	for _, storage := range c.Storage {
+		if len(storage) > 0 {
+			hasSession = true
+			break
+		}
+	}
+	return AuthSummary{c.Method, c.Username, c.APIUser, c.Password != "", hasSession, c.Token != ""}
 }
 
 type Account struct {
