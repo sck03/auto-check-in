@@ -25,6 +25,7 @@ type Config struct {
 	DesktopControl port.DesktopIntegration
 	Desktop        bool
 	Version        string
+	DataDir        string
 	AllowedOrigins []string
 }
 type API struct {
@@ -140,7 +141,7 @@ func (a *API) routes() {
 		respond(w, 200, map[string]string{"status": "ok", "version": a.config.Version})
 	})
 	m.HandleFunc("GET /api/v1/meta", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, 200, map[string]any{"version": a.config.Version, "go_version": runtime.Version(), "server_time": time.Now().UTC(), "browser_available": s.Browser.Available(), "allow_http": s.AllowHTTP, "desktop": a.config.Desktop})
+		respond(w, 200, map[string]any{"version": a.config.Version, "go_version": runtime.Version(), "server_time": time.Now().UTC(), "browser_available": s.Browser.Available(), "allow_http": s.AllowHTTP, "desktop": a.config.Desktop, "data_dir": a.config.DataDir})
 	})
 	m.HandleFunc("GET /api/v1/templates", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, domain.Templates()) })
 	m.HandleFunc("GET /api/v1/desktop", func(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,10 @@ import (
 	winassets "auto-check-in/build/windows"
 	"auto-check-in/internal/bootstrap"
 	"auto-check-in/internal/desktop"
+	"auto-check-in/internal/port"
 	"flag"
+	"os"
+	"path/filepath"
 	"syscall"
 	"unsafe"
 )
@@ -16,17 +19,32 @@ func main() {
 	config.Listen = "127.0.0.1:0"
 	config.Desktop = true
 	background := flag.Bool("background", false, "Start in the system tray")
-	flag.StringVar(&config.DataDir, "data", config.DataDir, "Persistent data directory")
+	flag.StringVar(&config.DataDir, "data", config.DataDir, "Persistent data directory (default: data beside executable)")
 	flag.Parse()
-	manager, err := desktop.NewManager(config.DataDir, *background)
-	if err != nil {
-		showError(err.Error())
-		return
+	var manager *desktop.Manager
+	config.NewDesktop = func(dir string) (port.DesktopIntegration, error) {
+		var err error
+		manager, err = desktop.NewManager(dir, *background)
+		if err != nil {
+			return nil, err
+		}
+		if config.DataDir == "" {
+			// Keep an existing login startup registration on this executable
+			// pointed at the new default after a successful migration.
+			base, _ := os.UserCacheDir()
+			executable, _ := os.Executable()
+			if base != "" && desktop.NewStartup(executable, filepath.Join(base, "AutoCheckIn")).Enabled() {
+				prefs := manager.Status().Preferences
+				prefs.AutoStart = true
+				_, err = manager.Configure(prefs)
+			}
+		}
+		return manager, err
 	}
-	config.DesktopControl = manager
 	core, err := bootstrap.Start(config)
 	if err != nil {
-		if desktop.ActivateExisting(config.DataDir, config.AccessToken) {
+		dir, _ := config.DataDirectory()
+		if dir != "" && desktop.ActivateExisting(dir, config.AccessToken) {
 			return
 		}
 		showError(err.Error())

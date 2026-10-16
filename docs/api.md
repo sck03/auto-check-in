@@ -13,7 +13,7 @@
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | GET | `/healthz`（无前缀） | 最小健康检查，无账号数据 |
-| GET | `/meta`、`/templates` | 程序版本、Go 版本、浏览器状态、站点模板 |
+| GET | `/meta`、`/templates` | 程序版本、Go 版本、浏览器状态、实际 `data_dir` 绝对路径、站点模板 |
 | GET / POST | `/sites` | 列出 / 创建站点 |
 | PUT / DELETE | `/sites/{id}` | 更新 / 删除站点 |
 | GET / POST | `/accounts` | 列出 / 创建账号 |

@@ -16,7 +16,7 @@ import (
 
 var testNow = time.Date(2026, 10, 15, 0, 5, 0, 0, time.UTC)
 
-func testStore(t *testing.T) (*Store, string, *security.Vault) {
+func testStore(t testing.TB) (*Store, string, *security.Vault) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "checkin.db")
 	v, _ := security.NewVault(bytes.Repeat([]byte{7}, 32))
@@ -27,7 +27,7 @@ func testStore(t *testing.T) (*Store, string, *security.Vault) {
 	t.Cleanup(func() { _ = s.Close() })
 	return s, path, v
 }
-func addAccount(t *testing.T, s *Store, id string) (domain.Account, domain.Credentials) {
+func addAccount(t testing.TB, s *Store, id string) (domain.Account, domain.Credentials) {
 	t.Helper()
 	c := domain.Credentials{Method: "cookie", APIUser: id, CookieHeader: "session=private-" + id}
 	a, err := s.SaveAccount(context.Background(), domain.Account{ID: id, SiteID: "anyrouter", Name: id, Enabled: true, Schedule: domain.DefaultSchedule()}, c, testNow.Add(-time.Hour))

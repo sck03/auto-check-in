@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { request } from '../api'
 import { quota, statusLabels, time } from '../format'
 import type { Account, Run, RunPage } from '../types'
@@ -15,42 +15,64 @@ const account = ref(''),
   offset = ref(0),
   error = ref('')
 const detail = ref<Run | null>(null)
-let requestID = 0
+let controller: AbortController | undefined
+let activeQuery = ''
+let pendingRefresh = false
 async function load() {
-  const id = ++requestID
   const params = new URLSearchParams({
     account_id: account.value,
     status: status.value,
     action: action.value,
     limit: '30',
     offset: String(offset.value),
-  })
+  }).toString()
+  if (controller && activeQuery === params) {
+    pendingRefresh = true
+    return
+  }
+  controller?.abort()
+  const current = new AbortController()
+  controller = current
+  activeQuery = params
+  pendingRefresh = false
   try {
-    const data = await request<RunPage>('/runs?' + params)
-    if (id === requestID) {
+    const data = await request<RunPage>('/runs?' + params, 'GET', undefined, {
+      signal: current.signal,
+    })
+    if (!current.signal.aborted) {
       page.value = data
       error.value = ''
     }
   } catch (e) {
-    if (id === requestID) error.value = (e as Error).message
+    if (!current.signal.aborted) error.value = (e as Error).message
+  } finally {
+    if (controller === current) {
+      controller = undefined
+      if (pendingRefresh) void load()
+    }
   }
 }
 async function cancel(run: Run) {
   try {
     await request('/runs/' + run.id, 'DELETE')
-    await load()
     emit('refresh')
   } catch (e) {
     error.value = (e as Error).message
   }
 }
-watch([account, status, action], () => {
-  offset.value = 0
-  void load()
+watch(
+  [account, status, action],
+  () => {
+    offset.value = 0
+  },
+  { flush: 'sync' },
+)
+watch([account, status, action, offset, () => props.revision], load, { immediate: true })
+onScopeDispose(() => {
+  controller?.abort()
+  controller = undefined
+  pendingRefresh = false
 })
-watch(() => props.revision, load)
-watch(offset, load)
-onMounted(load)
 const duration = (r: Run) =>
   r.started_at && r.finished_at
     ? Math.max(0, (Date.parse(r.finished_at) - Date.parse(r.started_at)) / 1000).toFixed(1) + ' 秒'
@@ -83,6 +105,7 @@ const evidence: Record<string, string> = {
   transport_error: '网络或浏览器执行异常',
   cancelled_context: '任务被中断',
   before_reset: '尚未到每日 08:00',
+  schedule_deferred: '计划已过期，已安排下次执行',
   login_required: '此站需要重新登录',
 }
 const stages: Record<string, string> = {

@@ -58,7 +58,19 @@ func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) 
 	if a.ActiveRunID != "" {
 		return r, domain.ErrBusy
 	}
+	deferRun := func(attempted bool, reason error) (domain.Run, error) {
+		if err := scheduleNext(ctx, tx, a, now, attempted); err != nil {
+			return r, err
+		}
+		if err := tx.Commit(); err != nil {
+			return r, err
+		}
+		return r, reason
+	}
 	if a.Schedule.InCompletedCycle(now, a.LastSuccessAt) {
+		if trigger == "scheduled" && a.NextRunAt != nil && !a.NextRunAt.After(now) {
+			return deferRun(true, domain.ErrCooldown)
+		}
 		return r, domain.ErrCooldown
 	}
 	attempts, err := dailyAttempts(ctx, tx, id, now)
@@ -78,7 +90,7 @@ func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) 
 		}
 		if attempts > 0 {
 			if a.LastStatus != domain.Failed || attempts > settings.MaxRetries {
-				return r, domain.ErrDailyLimit
+				return deferRun(true, domain.ErrDailyLimit)
 			}
 			trigger = "scheduled_retry"
 		}
@@ -88,14 +100,7 @@ func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) 
 			allowed = a.Schedule.WithinRetryWindow(now)
 		}
 		if !allowed {
-			next := a.Schedule.Next(now, a.ID, attempts > 0)
-			if _, err = tx.ExecContext(ctx, "UPDATE accounts SET next_run_at=? WHERE id=?", millis(next), a.ID); err != nil {
-				return r, err
-			}
-			if err = tx.Commit(); err != nil {
-				return r, err
-			}
-			return r, domain.ErrConflict
+			return deferRun(attempts > 0, domain.ErrConflict)
 		}
 	}
 	site, err := getSite(ctx, tx, a.SiteID)
@@ -108,63 +113,69 @@ func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) 
 	}
 	return r, tx.Commit()
 }
+
+func scheduleNext(ctx context.Context, tx *sql.Tx, a domain.Account, now time.Time, attempted bool) error {
+	_, err := tx.ExecContext(ctx, "UPDATE accounts SET next_run_at=? WHERE id=?", millis(a.Schedule.Next(now, a.ID, attempted)), a.ID)
+	return err
+}
+
 func (s *Store) Claim(ctx context.Context, allowScheduled bool, now time.Time) (*domain.Run, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	var id string
-	err = tx.QueryRowContext(ctx, `SELECT r.id FROM runs r JOIN accounts a ON a.id=r.account_id WHERE r.status='queued' AND a.enabled=1 AND (? OR r.trigger IN ('manual','manual_retry')) ORDER BY r.created_at,r.id LIMIT 1`, allowScheduled).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	pending, err := getRun(ctx, tx, id)
-	if err != nil {
-		return nil, err
-	}
-	if pending.Trigger == "scheduled" || pending.Trigger == "scheduled_retry" {
-		a, e := getAccount(ctx, tx, pending.AccountID)
-		if e != nil {
-			return nil, e
+	for {
+		// Start from the small queue index, rather than joining each account's
+		// entire history before filtering for queued work.
+		pending, err := scanRun(tx.QueryRowContext(ctx, "SELECT "+runColumns+` FROM runs
+WHERE status='queued' AND (? OR trigger IN ('manual','manual_retry'))
+AND EXISTS (SELECT 1 FROM accounts WHERE id=runs.account_id AND enabled=1)
+ORDER BY created_at,id LIMIT 1`, allowScheduled))
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, tx.Commit()
 		}
-		attempts, e := dailyAttempts(ctx, tx, a.ID, now)
-		if e != nil {
-			return nil, e
+		if err != nil {
+			return nil, err
 		}
-		allowed := attempts == 0 && a.Schedule.WithinWindow(now) && !a.Schedule.ScheduledTime(now, a.ID).After(now)
-		if pending.Trigger == "scheduled_retry" {
-			settings, e := getSettings(ctx, tx)
+		if pending.Trigger == "scheduled" || pending.Trigger == "scheduled_retry" {
+			a, e := getAccount(ctx, tx, pending.AccountID)
 			if e != nil {
 				return nil, e
 			}
-			allowed = attempts > 0 && attempts <= settings.MaxRetries && a.LastStatus == domain.Failed && a.Schedule.WithinRetryWindow(now)
-		}
-		if !allowed || a.Schedule.InCompletedCycle(now, a.LastSuccessAt) {
-			result := domain.Result{Status: domain.Cancelled, Message: "排队计划已过期，按每日窗口重新安排", Evidence: "schedule_deferred"}
-			if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='cancelled',finished_at=?,result=? WHERE id=?", millis(now), jsonText(result), id); err != nil {
-				return nil, err
+			attempts, e := dailyAttempts(ctx, tx, a.ID, now)
+			if e != nil {
+				return nil, e
 			}
-			if _, err = tx.ExecContext(ctx, "UPDATE accounts SET next_run_at=? WHERE id=?", millis(a.Schedule.Next(now, a.ID, attempts > 0)), a.ID); err != nil {
-				return nil, err
+			allowed := attempts == 0 && a.Schedule.WithinWindow(now) && !a.Schedule.ScheduledTime(now, a.ID).After(now)
+			if pending.Trigger == "scheduled_retry" {
+				settings, e := getSettings(ctx, tx)
+				if e != nil {
+					return nil, e
+				}
+				allowed = attempts > 0 && attempts <= settings.MaxRetries && a.LastStatus == domain.Failed && a.Schedule.WithinRetryWindow(now)
 			}
-			return nil, tx.Commit()
+			if !allowed || a.Schedule.InCompletedCycle(now, a.LastSuccessAt) {
+				result := domain.Result{Status: domain.Cancelled, Message: "排队计划已过期，按每日窗口重新安排", Evidence: "schedule_deferred"}
+				if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='cancelled',finished_at=?,result=? WHERE id=?", millis(now), jsonText(result), pending.ID); err != nil {
+					return nil, err
+				}
+				if err = scheduleNext(ctx, tx, a, now, attempts > 0); err != nil {
+					return nil, err
+				}
+				continue
+			}
 		}
+		if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='running',started_at=? WHERE id=? AND status='queued'", millis(now), pending.ID); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
+		started := time.UnixMilli(millis(now)).UTC()
+		pending.Status, pending.StartedAt = domain.Running, &started
+		return &pending, nil
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='running',started_at=? WHERE id=? AND status='queued'", millis(now), id); err != nil {
-		return nil, err
-	}
-	r, err := getRun(ctx, tx, id)
-	if err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	return &r, nil
 }
 
 func (s *Store) Finish(ctx context.Context, id string, result domain.Result, c *domain.Credentials, settings domain.Settings, now time.Time) error {
@@ -257,7 +268,7 @@ func (s *Store) CancelQueued(ctx context.Context, id string, now time.Time) erro
 	if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='cancelled',finished_at=?,result=? WHERE id=?", millis(now), jsonText(result), id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE accounts SET next_run_at=? WHERE id=?", millis(a.Schedule.Next(now, a.ID, true)), a.ID); err != nil {
+	if err = scheduleNext(ctx, tx, a, now, true); err != nil {
 		return err
 	}
 	return tx.Commit()

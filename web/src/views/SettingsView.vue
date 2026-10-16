@@ -234,6 +234,8 @@ async function restore() {
           </dd>
           <dt>运行方式</dt>
           <dd>{{ isDesktop() ? 'Windows 桌面' : '网页管理' }}</dd>
+          <dt>数据目录</dt>
+          <dd class="data-directory">{{ meta.data_dir }}</dd>
         </dl>
         <p v-if="!meta.browser_available" class="field-help">
           安装 Chrome / Edge / Chromium，或配置浏览器路径后重启，即可使用浏览器登录。
@@ -248,3 +250,8 @@ async function restore() {
     </div>
   </div>
 </template>
+<style scoped>
+.data-directory {
+  overflow-wrap: anywhere;
+}
+</style>

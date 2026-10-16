@@ -29,7 +29,7 @@ import (
 )
 
 type Config struct {
-	DesktopControl                                                 port.DesktopIntegration
+	NewDesktop                                                     func(dataDir string) (port.DesktopIntegration, error)
 	Desktop                                                        bool
 	DataDir, Listen, AccessToken, MasterKey, BrowserPath, ProxyURL string
 	AllowHTTP, NoSandbox                                           bool
@@ -37,14 +37,6 @@ type Config struct {
 }
 
 func EnvConfig() Config {
-	dir := os.Getenv("CHECKIN_DATA_DIR")
-	if dir == "" {
-		base, err := os.UserCacheDir()
-		if err != nil {
-			base = "."
-		}
-		dir = filepath.Join(base, "AutoCheckIn")
-	}
 	listen := os.Getenv("CHECKIN_LISTEN")
 	if listen == "" {
 		listen = "127.0.0.1:18990"
@@ -56,7 +48,7 @@ func EnvConfig() Config {
 		}
 	}
 	return Config{
-		DataDir: dir, Listen: listen, AccessToken: os.Getenv("CHECKIN_ACCESS_TOKEN"), MasterKey: os.Getenv("CHECKIN_MASTER_KEY"),
+		DataDir: os.Getenv("CHECKIN_DATA_DIR"), Listen: listen, AccessToken: os.Getenv("CHECKIN_ACCESS_TOKEN"), MasterKey: os.Getenv("CHECKIN_MASTER_KEY"),
 		BrowserPath: os.Getenv("CHECKIN_BROWSER_PATH"), ProxyURL: os.Getenv("CHECKIN_PROXY_URL"),
 		AllowHTTP: os.Getenv("CHECKIN_ALLOW_HTTP") == "true", NoSandbox: os.Getenv("CHECKIN_BROWSER_NO_SANDBOX") == "true", AllowedOrigins: origins,
 	}
@@ -82,7 +74,7 @@ func Start(config Config) (rt *Runtime, err error) {
 			return nil, fmt.Errorf("代理地址应为不含用户名密码的 http、https 或 socks5 地址")
 		}
 	}
-	dir, err := filepath.Abs(config.DataDir)
+	dir, err := config.DataDirectory()
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +90,13 @@ func Start(config Config) (rt *Runtime, err error) {
 			release()
 		}
 	}()
+	if config.DataDir == "" {
+		if base, e := os.UserCacheDir(); e == nil {
+			if err = migrateLegacyData(filepath.Join(base, "AutoCheckIn"), dir, config.MasterKey); err != nil {
+				return nil, fmt.Errorf("迁移旧数据失败：%w", err)
+			}
+		}
+	}
 	key, err := security.LoadKey(dir, config.MasterKey)
 	if err != nil {
 		return nil, err
@@ -122,6 +121,14 @@ func Start(config Config) (rt *Runtime, err error) {
 	if err = repo.Recover(context.Background(), time.Now().UTC()); err != nil {
 		return nil, err
 	}
+	var desktopControl port.DesktopIntegration
+	if config.NewDesktop != nil {
+		// Preferences must be loaded after legacy data has been migrated.
+		desktopControl, err = config.NewDesktop(dir)
+		if err != nil {
+			return nil, err
+		}
+	}
 	listener, err := net.Listen("tcp", config.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("无法监听 %s：%w", config.Listen, err)
@@ -135,7 +142,7 @@ func Start(config Config) (rt *Runtime, err error) {
 		host = "127.0.0.1"
 	}
 	rt = &Runtime{URL: "http://" + net.JoinHostPort(host, port), Token: token, DataDir: dir, Service: service, browsers: browsers, cancel: cancel, release: release, Errors: make(chan error, 1)}
-	rt.server = &http.Server{Handler: httpapi.New(service, token, web.Assets(), httpapi.Config{Version: buildinfo.Version, AllowedOrigins: config.AllowedOrigins, Desktop: config.Desktop, DesktopControl: config.DesktopControl}),
+	rt.server = &http.Server{Handler: httpapi.New(service, token, web.Assets(), httpapi.Config{Version: buildinfo.Version, DataDir: dir, AllowedOrigins: config.AllowedOrigins, Desktop: config.Desktop, DesktopControl: desktopControl}),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	endpoint, _ := json.Marshal(map[string]string{"url": rt.URL})
 	if err = os.WriteFile(filepath.Join(dir, "endpoint.json"), endpoint, 0600); err != nil {

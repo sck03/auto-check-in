@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,19 +28,26 @@ type queryer interface {
 type scanner interface{ Scan(...any) error }
 
 func Open(path string, vault *security.Vault) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	uriPath := filepath.ToSlash(absolute)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	// These settings belong to each connection, including replacements created
+	// after cancellation. A file URI also preserves spaces, #, % and ? in paths.
+	dsn := url.URL{Scheme: "file", Path: uriPath, RawQuery: url.Values{
+		"_pragma": {"busy_timeout(5000)", "foreign_keys(1)", "journal_mode(WAL)"},
+	}.Encode()}
+	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s := &Store{db: db, vault: vault}
-	for _, pragma := range []string{"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL"} {
-		if _, err = db.Exec(pragma); err != nil {
-			_ = db.Close()
-			return nil, err
-		}
-	}
 	if err = s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -47,15 +56,28 @@ func Open(path string, vault *security.Vault) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// Verify checks a migrated copy without changing its execution state.
+func (s *Store) Verify(ctx context.Context) error {
+	var result string
+	if err := s.db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("数据库完整性检查失败：%s", result)
+	}
+	return s.checkAccountSecret(ctx)
+}
+
 func (s *Store) migrate() error {
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return fmt.Errorf("数据库版本 %d 高于当前程序支持的版本", version)
 	}
-	if version == 2 {
+	if version == 3 {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -73,12 +95,24 @@ AND json_extract(schedule,'$.window_end')='09:00'
 AND json_extract(schedule,'$.retry_until')='09:30'`, millis(time.Now())); err != nil {
 			return err
 		}
-		if _, err = tx.Exec("PRAGMA user_version=2"); err != nil {
+	}
+	if version == 0 {
+		if err = createSchema(tx); err != nil {
 			return err
 		}
-		return tx.Commit()
 	}
-	_, err = tx.Exec(`
+	// Queue polling and daily budgets must not scan years of completed history.
+	if _, err = tx.Exec(`
+CREATE INDEX IF NOT EXISTS queued_runs ON runs(created_at,id) WHERE status='queued';
+CREATE INDEX IF NOT EXISTS daily_checkin_attempts ON runs(account_id,started_at) WHERE action='checkin';
+PRAGMA user_version=3;`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func createSchema(tx *sql.Tx) error {
+	_, err := tx.Exec(`
 CREATE TABLE sites(id TEXT PRIMARY KEY, config TEXT NOT NULL);
 CREATE TABLE accounts(
  id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), name TEXT NOT NULL,
@@ -100,8 +134,7 @@ CREATE TABLE runs(
 CREATE UNIQUE INDEX one_active_run ON runs(account_id) WHERE status IN ('queued','running','waiting_user');
 CREATE INDEX run_history ON runs(created_at DESC,id DESC);
 CREATE INDEX account_history ON runs(account_id,created_at DESC);
-CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), config TEXT NOT NULL);
-PRAGMA user_version=2;`)
+CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), config TEXT NOT NULL);`)
 	if err != nil {
 		return err
 	}
@@ -117,7 +150,7 @@ PRAGMA user_version=2;`)
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func jsonText(v any) string {

@@ -283,6 +283,8 @@ test('访问保护、加密备份和空白实例恢复', async ({ page }) => {
   expect(visible).not.toContain('session=backup-user')
   await page.getByRole('button', { name: '刷新数据' }).click()
   await selectNav(page, '设置')
+  await expect(page.locator('.data-directory')).toHaveText(directory)
+  await page.screenshot({ path: path.join(root, 'artifacts/ui-settings.png'), fullPage: true })
   await page.getByLabel('备份口令').fill('e2e-long-backup-password')
   const downloading = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出加密备份' }).click()
@@ -373,6 +375,107 @@ test('保存站点时保留进行中的刷新之后的更新', async ({ page }) 
     await expect(page.getByRole('heading', { name: '刷新期间新增站点' })).toBeVisible({
       timeout: 2500,
     })
+  } finally {
+    release()
+  }
+  expect(errors).toEqual([])
+})
+
+async function pauseWorkspacePolling(page: Page) {
+  // Isolate request counts from the unrelated five-second workspace refresh.
+  await page.clock.install({ time: new Date('2026-10-16T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-10-16T00:01:00Z'))
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '我的账号' })).toBeVisible()
+}
+
+test('记录筛选重置分页时只发送一次查询', async ({ page }) => {
+  await pauseWorkspacePolling(page)
+  const queries: URLSearchParams[] = []
+  await page.route('**/api/v1/runs?*', async (route) => {
+    queries.push(new URL(route.request().url()).searchParams)
+    await route.fulfill({ json: { items: [], total: 61 } })
+  })
+  await selectNav(page, '执行记录')
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect.poll(() => queries.some((query) => query.get('offset') === '30')).toBe(true)
+  await page.getByRole('combobox', { name: '状态', exact: true }).selectOption('failed')
+  await expect.poll(() => queries.some((query) => query.get('status') === 'failed')).toBe(true)
+  // Let both Vue watchers and outgoing fetches settle; a duplicate used to be
+  // sent when changing a filter while the current offset was nonzero.
+  await page.waitForTimeout(150)
+  const filtered = queries.filter((query) => query.get('status') === 'failed')
+  expect(filtered).toHaveLength(1)
+  expect(filtered[0].get('offset')).toBe('0')
+  await expect(page.getByRole('button', { name: '上一页' })).toBeDisabled()
+  expect(errors).toEqual([])
+})
+
+test('慢速记录查询合并连续刷新且最终显示结果', async ({ page }) => {
+  await pauseWorkspacePolling(page)
+  let count = 0
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/runs?*', async (route) => {
+    count++
+    if (count === 1) await gate
+    await route.fulfill({ json: { items: [], total: count === 1 ? 31 : 61 } })
+  })
+  await selectNav(page, '执行记录')
+  await expect.poll(() => count).toBe(1)
+  try {
+    await page.getByRole('button', { name: '刷新记录' }).click()
+    await page.getByRole('button', { name: '刷新记录' }).click()
+    await page.waitForTimeout(150)
+    expect(count).toBe(1)
+    release()
+    await expect(page.getByText('共 61 条记录 · 北京时间')).toBeVisible()
+    expect(count).toBe(2)
+  } finally {
+    release()
+  }
+  expect(errors).toEqual([])
+})
+
+test('记录查询在筛选变更和离开页面时中止', async ({ page }) => {
+  await pauseWorkspacePolling(page)
+  let hold = false
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/v1/runs?*', async (route) => {
+    if (hold) await gate
+    await route.fulfill({ json: { items: [], total: 61 } }).catch(() => undefined)
+  })
+  await selectNav(page, '执行记录')
+  await expect(page.getByRole('button', { name: '下一页' })).toBeEnabled()
+  hold = true
+  try {
+    const oldRequest = page.waitForEvent(
+      'request',
+      (request) =>
+        request.url().includes('/runs?') &&
+        new URL(request.url()).searchParams.get('offset') === '30',
+    )
+    await page.getByRole('button', { name: '下一页' }).click()
+    const old = await oldRequest
+    const superseded = page.waitForEvent('requestfailed', (request) => request === old)
+    const nextRequest = page.waitForEvent(
+      'request',
+      (request) =>
+        request.url().includes('/runs?') &&
+        new URL(request.url()).searchParams.get('status') === 'failed',
+    )
+    await page.getByRole('combobox', { name: '状态', exact: true }).selectOption('failed')
+    await superseded
+    const next = await nextRequest
+    const abandoned = page.waitForEvent('requestfailed', (request) => request === next)
+    await selectNav(page, '设置')
+    await abandoned
+    await expect(page.getByRole('heading', { name: '运行环境' })).toBeVisible()
   } finally {
     release()
   }

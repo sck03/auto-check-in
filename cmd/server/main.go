@@ -19,7 +19,7 @@ import (
 func main() {
 	config := bootstrap.EnvConfig()
 	flag.StringVar(&config.Listen, "listen", config.Listen, "HTTP listen address")
-	flag.StringVar(&config.DataDir, "data", config.DataDir, "Persistent data directory")
+	flag.StringVar(&config.DataDir, "data", config.DataDir, "Persistent data directory (default: data beside executable)")
 	open := flag.Bool("open", false, "Open the management page in the default browser")
 	version := flag.Bool("version", false, "Print version")
 	health := flag.Bool("healthcheck", false, "Check the running HTTP service")

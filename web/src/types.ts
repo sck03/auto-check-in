@@ -124,6 +124,7 @@ export interface Template {
 }
 export interface Meta {
   version: string
+  data_dir: string
   go_version: string
   desktop: boolean
   server_time: string
