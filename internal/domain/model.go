@@ -45,7 +45,7 @@ type Site struct {
 	Transport    string    `json:"transport"`
 	LoginPath    string    `json:"login_path"`
 	LoginAPIPath string    `json:"login_api_path"`
-	LogoutPath   string    `json:"logout_path"`
+	LogoutPath   string    `json:"logout_path,omitempty"` // Legacy configuration only; never requested.
 	CheckInPath  string    `json:"checkin_path"`
 	UserInfoPath string    `json:"user_info_path"`
 	UserHeader   string    `json:"user_header"`
@@ -65,7 +65,7 @@ type Template struct {
 func Templates() []Template {
 	base := Site{
 		Adapter: "newapi", Transport: "http", LoginPath: "/login", LoginAPIPath: "/api/user/login",
-		LogoutPath: "/api/user/logout", CheckInPath: "/api/user/checkin", UserInfoPath: "/api/user/self",
+		CheckInPath: "/api/user/checkin", UserInfoPath: "/api/user/self",
 		UserHeader: "New-Api-User", QuotaPerUnit: 500000, Unit: "USD",
 		Selectors: Selectors{Username: `input[name="username"],input[name="email"],input[type="email"]`,
 			Password: `input[type="password"]`, Submit: `button[type="submit"]`,
@@ -78,7 +78,7 @@ func Templates() []Template {
 	any.BaseURL = "https://anyrouter.top"
 	any.Adapter = "anyrouter"
 	any.Transport = "browser"
-	any.CheckInPath = "/api/user/sign_in"
+	any.CheckInPath = ""
 	agent := base
 	agent.ID = "agentrouter"
 	agent.Name = "Agent Router"
@@ -90,11 +90,20 @@ func Templates() []Template {
 	page.Adapter = "browser"
 	page.Transport = "browser"
 	page.CheckInPath = "/"
+	wong := base
+	wong.Name, wong.BaseURL, wong.Transport = "WONG", "https://wzw.pp.ua", "browser"
+	mint := base
+	mint.Name, mint.BaseURL, mint.Adapter = "薄荷 API 每日签到", "https://up.x666.me", "x666"
+	mint.Transport, mint.LoginPath, mint.LoginAPIPath = "browser", "/", "/api/auth/login"
+	mint.CheckInPath, mint.UserInfoPath = "/api/checkin/spin", "/api/checkin/status"
+	mint.QuotaPerUnit, mint.Unit = 500, "次"
 	return []Template{
-		{ID: "anyrouter", Description: "独立签到接口，每天随机执行一次", Site: any, Schedule: DefaultSchedule()},
+		{ID: "anyrouter", Description: "北京时间 08:00 后访问或刷新已登录页面，无需点击签到", Site: any, Schedule: DefaultSchedule()},
 		{ID: "agentrouter", Description: "重新登录触发签到，需密码或已授权的 OAuth 会话", Site: agent, Schedule: DefaultSchedule()},
 		{ID: "newapi", Description: "支持签到的 New API / One API 衍生站，接口可调整", Site: base, Schedule: DefaultSchedule()},
 		{ID: "browser", Description: "通过 CSS 选择器点击签到并核验页面结果", Site: page, Schedule: DefaultSchedule()},
+		{ID: "wong", Description: "WONG 每日签到，使用 New API 签到接口并复核今日状态", Site: wong, Schedule: DefaultSchedule()},
+		{ID: "x666", Description: "薄荷 API 在 up.x666.me 每日免费抽奖签到，奖励直接到账；先在此页面用 LinuxDO 登录并保存会话", Site: mint, Schedule: DefaultSchedule()},
 	}
 }
 
@@ -116,6 +125,7 @@ type Credentials struct {
 	CookieHeader string                       `json:"cookie_header"`
 	APIUser      string                       `json:"api_user"`
 	Token        string                       `json:"token"`
+	UserAgent    string                       `json:"user_agent,omitempty"`
 	Cookies      []Cookie                     `json:"cookies,omitempty"`
 	Storage      map[string]map[string]string `json:"storage,omitempty"`
 }
@@ -133,6 +143,11 @@ func (c Credentials) Apply(p *CredentialPatch) Credentials {
 	if p == nil {
 		return c
 	}
+	if (p.Username != nil && *p.Username != c.Username) || (p.Password != nil && *p.Password != c.Password) || (p.Token != nil && *p.Token != c.Token) {
+		// Credentials for another identity must never reuse a verified old session.
+		c.Cookies, c.Storage = nil, nil
+		c.CookieHeader, c.APIUser, c.Token, c.UserAgent = "", "", "", ""
+	}
 	if p.Method != nil {
 		c.Method = *p.Method
 	}
@@ -146,6 +161,7 @@ func (c Credentials) Apply(p *CredentialPatch) Credentials {
 		c.CookieHeader = *p.CookieHeader
 		c.Cookies = nil
 		c.Storage = nil
+		c.UserAgent = ""
 	}
 	if p.APIUser != nil {
 		c.APIUser = *p.APIUser
@@ -214,6 +230,9 @@ type Result struct {
 	Status            string `json:"status"`
 	Message           string `json:"message"`
 	Evidence          string `json:"evidence"`
+	Stage             string `json:"stage,omitempty"`
+	HTTPStatus        int    `json:"http_status,omitempty"`
+	Advice            string `json:"advice,omitempty"`
 	Reward            *int64 `json:"reward"`
 	BalanceBefore     *int64 `json:"balance_before"`
 	BalanceAfter      *int64 `json:"balance_after"`

@@ -38,7 +38,7 @@ func insertRun(ctx context.Context, tx *sql.Tx, r domain.Run) error {
 func dailyAttempts(ctx context.Context, q queryer, id string, now time.Time) (int, error) {
 	start, end := domain.DayBounds(now)
 	var count int
-	err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE account_id=? AND action='checkin' AND started_at>=? AND started_at<?", id, millis(start), millis(end)).Scan(&count)
+	err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE account_id=? AND action='checkin' AND started_at>=? AND started_at<? AND COALESCE(json_extract(result,'$.evidence'),'')<>'before_reset'", id, millis(start), millis(end)).Scan(&count)
 	return count, err
 }
 func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) (domain.Run, error) {
@@ -186,6 +186,14 @@ func (s *Store) Finish(ctx context.Context, id string, result domain.Result, c *
 	}
 	next := a.Schedule.Next(now, a.ID, true)
 	nextMillis := millis(next)
+	if result.Evidence == "before_reset" {
+		day, _ := domain.DayBounds(now)
+		next = a.Schedule.ScheduledTime(now, a.ID)
+		if reset := day.Add(8 * time.Hour); next.Before(reset) {
+			next = reset
+		}
+		nextMillis = millis(next)
+	}
 	lastSuccess := ptrMillis(a.LastSuccessAt)
 	if result.Complete() {
 		lastSuccess = millis(now)

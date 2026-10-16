@@ -24,11 +24,14 @@ func TestStrictResultMatrix(t *testing.T) {
 		{"captcha", "newapi", `{"success":false,"message":"需要验证码"}`, domain.NeedsAttention, 200},
 		{"auth", "newapi", `{}`, domain.NeedsAttention, 401},
 		{"rate limited", "newapi", `{}`, domain.Failed, 429},
-		{"any code", "anyrouter", `{"code":0}`, domain.Succeeded, 200},
+		{"code without acknowledgement", "newapi", `{"code":0}`, domain.Unverified, 200},
 		{"any explicit rejection wins", "anyrouter", `{"code":0,"success":false}`, domain.Failed, 200},
 		{"agent true", "agentrouter", `{"success":true,"data":{"checked_in":true}}`, domain.Succeeded, 200},
 		{"agent false", "agentrouter", `{"success":true,"data":{"checked_in":false}}`, domain.AlreadyDone, 200},
 		{"agent missing", "agentrouter", `{"success":true,"data":{"quota":12500000}}`, domain.Unverified, 200},
+		{"agent login rule", "agentrouter", `{"success":true,"data":{"id":12}}`, domain.Succeeded, 200},
+		{"cloudflare HTML", "newapi", `<!doctype html><html><title>Just a moment...</title></html>`, domain.NeedsAttention, 403},
+		{"turnstile", "newapi", `{"success":false,"message":"Turnstile token 为空"}`, domain.NeedsAttention, 200},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,6 +40,13 @@ func TestStrictResultMatrix(t *testing.T) {
 				t.Fatalf("%+v", r)
 			}
 		})
+	}
+}
+
+func TestTwoFactorIsNotLoginCompletion(t *testing.T) {
+	r := loginFailure(port.Response{Status: 200, Body: []byte(`{"success":true,"data":{"require_2fa":true}}`)})
+	if r == nil || r.Status != domain.NeedsAttention || r.Evidence != "two_factor_required" {
+		t.Fatalf("two-factor challenge accepted as authenticated: %+v", r)
 	}
 }
 func TestHTTPWorkflowAndRewardIsNotBalanceDelta(t *testing.T) {

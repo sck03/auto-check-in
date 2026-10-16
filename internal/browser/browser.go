@@ -19,6 +19,7 @@ import (
 	"auto-check-in/internal/port"
 	"auto-check-in/internal/transport"
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/storage"
@@ -102,6 +103,7 @@ type Session struct {
 	nativeWindow   bool
 	site           domain.Site
 	creds          domain.Credentials
+	browserToken   bool
 	loginResponses chan port.Response
 }
 
@@ -157,12 +159,21 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 		s.Close()
 		return nil, err
 	}
+	if c.UserAgent != "" && !s.nativeWindow {
+		if err = s.run(openCtx, cdpActionFunc(func(ctx context.Context) error {
+			_, e := cdp.Call(ctx, chromedp.FromContext(ctx).Target, emulation.SetUserAgentOverride, emulation.SetUserAgentOverrideParams{UserAgent: c.UserAgent})
+			return e
+		})); err != nil {
+			s.Close()
+			return nil, err
+		}
+	}
 	restored, err := s.restore(openCtx)
 	if err != nil {
 		s.Close()
 		return nil, err
 	}
-	navigate := cdpNavigate(site.BaseURL + site.LoginPath)
+	navigate := cdpNavigateDOMReady(site.BaseURL + site.LoginPath)
 	if interactive {
 		// Let the user interact while slow third-party assets are still loading.
 		navigate = cdpNavigateAsync(site.BaseURL + site.LoginPath)
@@ -204,6 +215,9 @@ func (s *Session) runOn(tab, ctx context.Context, actions ...cdpActionFunc) erro
 			return err
 		}
 		if err := action(op); err != nil {
+			if cause := ctx.Err(); cause != nil {
+				return cause
+			}
 			return err
 		}
 	}
@@ -368,7 +382,7 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 		return out, err
 	}
 	if value.Status == 0 {
-		return out, port.ErrManualRequired
+		return out, s.loginDiagnostic(ctx, "请求 "+method+" "+path+" 时未找到本站页面，请完成授权并返回站点")
 	}
 	out = port.Response{Status: value.Status, Body: []byte(value.Body), RetryAfterSeconds: value.Retry}
 	if path == s.site.UserInfoPath || path == s.site.LoginAPIPath {
@@ -380,6 +394,19 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 }
 
 func (s *Session) refreshUserID(ctx context.Context) error {
+	if s.site.Adapter == "x666" {
+		var token string
+		err := s.runSite(ctx, cdpEvaluate("location.origin==="+jsonJS(s.site.BaseURL)+" ? localStorage.getItem('userToken')||'' : ''", &token))
+		if err == nil {
+			s.browserToken = s.browserToken || token != ""
+			if s.browserToken {
+				// Once authentication comes from the page, logout must clear it.
+				// An explicitly supplied token still works without browser storage.
+				s.creds.Token = token
+			}
+		}
+		return err
+	}
 	var id string
 	expr := "(()=>{if(location.origin!==" + jsonJS(s.site.BaseURL) + ")return '';try{const u=JSON.parse(localStorage.getItem('user')||'{}');return u.id==null?'':String(u.id)}catch{return ''}})()"
 	err := s.runSite(ctx, cdpEvaluate(expr, &id))
@@ -416,8 +443,12 @@ func (s *Session) Snapshot(ctx context.Context) (domain.Credentials, error) {
 		return c, err
 	}
 	c.Storage = map[string]map[string]string{s.site.BaseURL: state}
+	if s.nativeWindow {
+		_ = s.runSite(ctx, cdpEvaluate("navigator.userAgent", &c.UserAgent))
+	}
 	_ = s.refreshUserID(ctx)
 	c.APIUser = s.creds.APIUser
+	c.Token = s.creds.Token
 	return c, nil
 }
 func (s *Session) Close() {

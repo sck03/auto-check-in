@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
@@ -114,6 +115,9 @@ func (s *Session) attachTab(info *target.Info) {
 	err := chromedp.Do(ctx)
 	if err == nil {
 		_, err = cdp.Call(ctx, chromedp.FromContext(ctx).Target, network.Enable, network.EnableParams{})
+	}
+	if err == nil && s.creds.UserAgent != "" && !s.nativeWindow {
+		_, err = cdp.Call(ctx, chromedp.FromContext(ctx).Target, emulation.SetUserAgentOverride, emulation.SetUserAgentOverrideParams{UserAgent: s.creds.UserAgent})
 	}
 	if err != nil {
 		s.removeTab(info.TargetID)

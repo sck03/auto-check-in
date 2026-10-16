@@ -93,6 +93,12 @@ func testInteractiveOAuth(t *testing.T, visible bool, method string, popup bool)
 	}
 	defer other.Close()
 	driver := session.(*Session)
+	if visible {
+		var webdriver bool
+		if err := driver.run(ctx, cdpEvaluate("navigator.webdriver", &webdriver)); err != nil || webdriver {
+			t.Fatalf("human login window still uses automation mode: webdriver=%v err=%v", webdriver, err)
+		}
+	}
 	if err := driver.run(ctx, cdpPoll("!!document.querySelector('button')", nil)); err != nil {
 		t.Fatal(err)
 	}

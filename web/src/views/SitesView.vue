@@ -11,6 +11,7 @@ const form = ref<Site | null>(null),
   busy = ref(false),
   error = ref('')
 const deleting = ref<Site | null>(null)
+const selectedTemplate = ref('newapi')
 const accountCounts = computed(() => {
   const counts = new Map<string, number>()
   for (const account of props.accounts)
@@ -24,19 +25,26 @@ const labels: Record<string, string> = {
   agentrouter: 'Agent Router',
   newapi: 'New API 兼容',
   browser: '页面签到',
+  wong: 'WONG',
+  x666: '薄荷 API 每日签到',
 }
 function add(template = 'newapi') {
   const source = props.templates.find((t) => t.id === template) || props.templates[0]
+  selectedTemplate.value = source.id
   form.value = JSON.parse(JSON.stringify(source.site))
   if (form.value) {
     form.value.id = ''
     form.value.version = 0
-    form.value.name = ''
+    form.value.name = source.site.name
   }
   isNew.value = true
   error.value = ''
 }
 function edit(site: Site) {
+  selectedTemplate.value =
+    props.templates.find(
+      (t) => t.site.base_url === site.base_url && t.site.adapter === site.adapter,
+    )?.id || site.adapter
   form.value = JSON.parse(JSON.stringify(site))
   isNew.value = false
   error.value = ''
@@ -44,12 +52,13 @@ function edit(site: Site) {
 function templateChange(event: Event) {
   const id = (event.target as HTMLSelectElement).value
   if (!isNew.value) return
+  const previous = props.templates.find((t) => t.id === selectedTemplate.value)?.site
   const name = form.value?.name || '',
     base = form.value?.base_url || ''
   add(id)
   if (form.value) {
-    form.value.name = name
-    form.value.base_url = base
+    if (name && name !== previous?.name) form.value.name = name
+    if (!form.value.base_url && base !== previous?.base_url) form.value.base_url = base
   }
 }
 async function save() {
@@ -137,12 +146,13 @@ async function remove() {
     <form id="site-form" class="form-stack" @submit.prevent="save">
       <div v-if="error" class="notice error" role="alert">{{ error }}</div>
       <label
-        >平台模板<select :value="form.adapter" :disabled="!isNew" @change="templateChange">
+        >平台模板<select :value="selectedTemplate" :disabled="!isNew" @change="templateChange">
           <option v-for="template in templates" :key="template.id" :value="template.id">
             {{ labels[template.id] }}
           </option>
         </select></label
       >
+      <p class="field-help">{{ templates.find((t) => t.id === selectedTemplate)?.description }}</p>
       <label
         >站点名称<input
           v-model="form.name"
@@ -172,10 +182,11 @@ async function remove() {
         <div class="field-grid">
           <label>登录页面<input v-model="form.login_path" required /></label
           ><label>登录接口<input v-model="form.login_api_path" required /></label>
-          <label>退出接口<input v-model="form.logout_path" /></label
-          ><label
+          <label
             >{{ form.adapter === 'browser' ? '签到页面' : '签到接口'
-            }}<input v-model="form.checkin_path" :disabled="form.adapter === 'agentrouter'"
+            }}<input
+              v-model="form.checkin_path"
+              :disabled="['agentrouter', 'anyrouter'].includes(form.adapter)"
           /></label>
           <label>用户信息接口<input v-model="form.user_info_path" required /></label
           ><label>用户 ID 请求头<input v-model="form.user_header" required /></label>

@@ -19,15 +19,7 @@ import (
 func (s *Session) Login(ctx context.Context) (port.Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.site.Adapter == "agentrouter" && s.site.LogoutPath != "" {
-		if _, err := s.request(ctx, "GET", s.site.LogoutPath, nil); err != nil {
-			return port.Response{}, err
-		}
-		if err := s.run(ctx, cdpEvaluate("localStorage.removeItem('user')", nil)); err != nil {
-			return port.Response{}, err
-		}
-	}
-	if err := s.run(ctx, cdpNavigate(s.site.BaseURL+s.site.LoginPath)); err != nil {
+	if err := s.runSite(ctx, cdpNavigateDOMReady(s.site.BaseURL+s.site.LoginPath)); err != nil {
 		return port.Response{}, err
 	}
 	for {
@@ -43,52 +35,96 @@ drained:
 	var clicked bool
 	if s.creds.Method == "password" {
 		// A normal email-login entry may precede the actual form.
-		entry := "(()=>{const a=" + jsonJS(args) + ";const visible=e=>e&&e.getClientRects().length;const user=[...document.querySelectorAll(a.selectors.username)].find(visible);if(user)return true;const entry=a.selectors.login_entry?document.querySelector(a.selectors.login_entry):[...document.querySelectorAll('button,a')].find(e=>visible(e)&&/邮箱或用户名|使用.*邮箱|Email or Username|Sign in with Email/i.test(e.textContent));if(entry)entry.click();return !!entry})()"
-		_ = s.run(ctx, cdpEvaluate(entry, &clicked))
-		poll := "(()=>{const a=" + jsonJS(args) + ";return [...document.querySelectorAll(a.selectors.username)].some(e=>e.getClientRects().length)})()"
+		poll := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "if(find(a.selectors.username)||find(userFallback))return true;const entry=find(a.selectors.login_entry)||[...document.querySelectorAll('button,a')].find(e=>visible(e)&&/邮箱或用户名|使用.*邮箱|Email or Username|Sign in with Email/i.test(e.textContent));if(entry&&!entry.dataset.checkinOpened){entry.dataset.checkinOpened='1';entry.click()}return false})()"
 		if err := s.run(ctx, cdpPoll(poll, nil, chromedp.WithPollingTimeout(20*time.Second))); err != nil {
-			return port.Response{}, port.ErrManualRequired
+			return port.Response{}, s.loginDiagnostic(ctx, "未找到可见的用户名输入框，请检查登录页面和选择器")
 		}
-		expr := "(()=>{const a=" + jsonJS(args) + ";const visible=e=>e&&e.getClientRects().length;const find=q=>[...document.querySelectorAll(q)].find(visible);const u=find(a.selectors.username),p=find(a.selectors.password);if(!u||!p)return false;const set=(el,value)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};set(u,a.username);set(p,a.password);const submit=find(a.selectors.submit)||[...document.querySelectorAll('button')].find(e=>visible(e)&&/^(登录|登 录|Sign in|Log in)$/i.test(e.textContent.trim()));if(!submit)return false;submit.click();return true})()"
+		expr := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "const u=find(a.selectors.username)||find(userFallback),p=find(a.selectors.password)||find('input[type=password]');if(!u||!p)return false;const set=(el,value)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};set(u,a.username);set(p,a.password);const submit=find(a.selectors.submit)||[...document.querySelectorAll('button')].find(e=>visible(e)&&/^(登录|登 录|登入|Sign in|Log in|Login)$/i.test(e.textContent.trim()));if(!submit||submit.disabled)return false;submit.click();return true})()"
 		if err := s.run(ctx, cdpEvaluate(expr, &clicked)); err != nil || !clicked {
-			return port.Response{}, port.ErrManualRequired
+			return port.Response{}, s.loginDiagnostic(ctx, "无法提交登录表单：输入框或按钮不存在、按钮不可用；请检查选择器或在浏览器中完成必填项")
 		}
 	} else if s.creds.Method == "github" || s.creds.Method == "linuxdo" {
-		expr := "(()=>{const a=" + jsonJS(args) + ";const visible=e=>e&&e.getClientRects().length;const selector=a.method==='github'?a.selectors.github:a.selectors.linuxdo;let button=selector?[...document.querySelectorAll(selector)].find(visible):null;const pattern=a.method==='github'?/GitHub/i:/Linux.?DO/i;if(!button)button=[...document.querySelectorAll('button,a')].find(e=>visible(e)&&pattern.test(e.textContent));if(!button)return false;button.click();return true})()"
-		if err := s.run(ctx, cdpEvaluate(expr, &clicked)); err != nil || !clicked {
-			return port.Response{}, port.ErrManualRequired
+		expr := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "const selector=a.method==='github'?a.selectors.github:a.selectors.linuxdo;let button=find(selector);const pattern=a.method==='github'?/GitHub/i:/Linux.?DO/i;if(!button)button=[...document.querySelectorAll('button,a')].find(e=>visible(e)&&pattern.test(e.textContent));if(!button||button.disabled)return false;button.click();return true})()"
+		if err := s.run(ctx, cdpPoll(expr, nil, chromedp.WithPollingTimeout(20*time.Second))); err != nil {
+			return port.Response{}, s.loginDiagnostic(ctx, "未找到可用的 "+s.creds.Method+" 授权入口，请检查站点配置")
 		}
 	} else {
-		return port.Response{}, port.ErrManualRequired
+		return port.Response{}, fmt.Errorf("登录方式 %s 无法自动提交：%w", s.creds.Method, port.ErrManualRequired)
 	}
 	timer := time.NewTimer(45 * time.Second)
 	defer timer.Stop()
-	select {
-	case response := <-s.loginResponses:
-		if id := transport.UserID(response.Body); id != "" {
-			s.creds.APIUser = id
+	ticker := time.NewTicker(750 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case response := <-s.loginResponses:
+			if id := transport.UserID(response.Body); id != "" {
+				s.creds.APIUser = id
+			}
+			return response, nil
+		case <-ctx.Done():
+			return port.Response{}, port.ErrUncertain
+		case <-s.ctx.Done():
+			return port.Response{}, port.ErrUncertain
+		case <-timer.C:
+			return port.Response{}, s.loginDiagnostic(ctx, "提交登录后 45 秒未收到登录接口响应；可能停留在授权页、验证页，或登录接口路径不匹配")
+		case <-ticker.C:
+			// A fast redirect can destroy the login response body before CDP reads
+			// it. Verify the resulting session without ever resubmitting the login.
+			op, cancel := context.WithTimeout(ctx, 3*time.Second)
+			response, err := s.request(op, "GET", s.site.UserInfoPath, nil)
+			cancel()
+			if err == nil && response.Status >= 200 && response.Status < 300 && transport.UserID(response.Body) != "" {
+				return response, nil
+			}
 		}
-		return response, nil
-	case <-ctx.Done():
-		return port.Response{}, port.ErrUncertain
-	case <-s.ctx.Done():
-		return port.Response{}, port.ErrUncertain
-	case <-timer.C:
-		return port.Response{}, port.ErrManualRequired
 	}
+}
+
+const loginDOMHelpers = `const visible=e=>e&&e.getClientRects().length;
+const find=q=>q?[...document.querySelectorAll(q)].find(visible):null;
+const userFallback='input[autocomplete="username"],input[name="username"],input[name="email"],input[type="email"],input#username,input#email';`
+
+// Read a small diagnostic, never a full page, request body, cookie or OAuth URL.
+func (s *Session) loginDiagnostic(ctx context.Context, fallback string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var detail string
+	expr := `(()=>{const visible=e=>e&&e.getClientRects().length;
+const text=(document.title+' '+(document.body?.innerText||'').slice(0,12000)).toLowerCase();
+let reason='';
+if(/just a moment|verify you are human|验证您是真人|请验证您|checking your browser/.test(text)||[...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]')].some(visible))reason='Cloudflare / Turnstile 真人验证未完成，请在浏览器登录窗口处理';
+else if([...document.querySelectorAll('input[autocomplete="one-time-code"],input[name="otp"],input[name="code"]')].some(visible))reason='站点要求验证码或二次验证，请在浏览器登录窗口完成';
+else {const alert=[...document.querySelectorAll('[role="alert"],.semi-toast-content,.ant-message-notice-content,.el-message__content')].find(visible);if(alert)reason='页面提示：'+alert.innerText.slice(0,200)}
+return (reason?reason+'；':'')+'当前页面 '+location.origin+location.pathname})()`
+	op, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_ = s.run(op, cdpEvaluate(expr, &detail))
+	return fmt.Errorf("%s；%s：%w", fallback, detail, port.ErrManualRequired)
+}
+
+func (s *Session) Visit(ctx context.Context, path string) error {
+	if err := domain.ValidatePath(path); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runSite(ctx, cdpNavigateDOMReady(s.site.BaseURL+path))
 }
 
 func (s *Session) PageCheckIn(ctx context.Context) (domain.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.run(ctx, cdpNavigate(s.site.BaseURL+s.site.CheckInPath)); err != nil {
+	if err := s.run(ctx, cdpNavigateDOMReady(s.site.BaseURL+s.site.CheckInPath)); err != nil {
 		return domain.Result{}, err
 	}
 	args := jsonJS(s.site.Selectors)
 	check := "(()=>{const s=" + args + ";const visible=q=>q&&[...document.querySelectorAll(q)].some(e=>e.getClientRects().length);if(visible(s.already))return 'already';if(visible(s.success))return 'success';return ''})()"
 	var state string
-	if err := s.run(ctx, cdpEvaluate(check, &state)); err != nil {
-		return domain.Result{}, err
+	ready := "(()=>{const s=" + args + ";return [s.checkin,s.success,s.already].filter(Boolean).some(q=>[...document.querySelectorAll(q)].some(e=>e.getClientRects().length))})()"
+	if err := s.run(ctx, cdpPoll(ready, nil, chromedp.WithPollingTimeout(20*time.Second)), cdpEvaluate(check, &state)); err != nil {
+		return domain.Result{}, s.loginDiagnostic(ctx, "签到页面未出现配置的按钮或结果标识，请检查页面和 CSS 选择器")
 	}
 	if state != "" {
 		return domain.Result{Status: domain.AlreadyDone, Message: "页面已显示完成状态", Evidence: "configured_page_state"}, nil
@@ -96,7 +132,7 @@ func (s *Session) PageCheckIn(ctx context.Context) (domain.Result, error) {
 	var clicked bool
 	click := "(()=>{const s=" + args + ";const el=[...document.querySelectorAll(s.checkin)].find(e=>e.getClientRects().length&&!e.disabled);if(!el)return false;el.click();return true})()"
 	if err := s.run(ctx, cdpEvaluate(click, &clicked)); err != nil || !clicked {
-		return domain.Result{}, port.ErrManualRequired
+		return domain.Result{}, s.loginDiagnostic(ctx, "签到按钮不存在或不可点击，请检查登录状态及按钮选择器")
 	}
 	if err := s.run(ctx, cdpPoll(check, &state, chromedp.WithPollingTimeout(25*time.Second))); err != nil {
 		return domain.Result{Status: domain.Unverified, Message: "已点击签到，但页面未出现配置的结果标识", Evidence: "page_result_missing"}, nil

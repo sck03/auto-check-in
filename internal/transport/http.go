@@ -148,6 +148,9 @@ func (s *HTTPSession) Request(ctx context.Context, method, path string, body any
 	req.Header.Set("Origin", s.site.BaseURL)
 	req.Header.Set("Referer", s.site.BaseURL+"/")
 	req.Header.Set("User-Agent", "AutoCheckIn/1.0")
+	if s.creds.UserAgent != "" {
+		req.Header.Set("User-Agent", s.creds.UserAgent)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -189,6 +192,11 @@ func (s *HTTPSession) Request(ctx context.Context, method, path string, body any
 			return out, port.ErrUncertain
 		}
 		return out, errors.New("响应读取失败或超过 1 MiB 限制")
+	}
+	if path == s.site.UserInfoPath {
+		if id := UserID(out.Body); id != "" {
+			s.creds.APIUser = id
+		}
 	}
 	return out, nil
 }

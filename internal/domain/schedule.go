@@ -17,7 +17,7 @@ type Schedule struct {
 }
 
 func DefaultSchedule() Schedule {
-	return Schedule{Timezone: "Asia/Shanghai", WindowStart: "08:00", WindowEnd: "09:00", RetryUntil: "09:30"}
+	return Schedule{Timezone: "Asia/Shanghai", WindowStart: "08:00", WindowEnd: "09:00", RetryUntil: "09:00"}
 }
 func clockMinutes(value string) (int, error) {
 	if len(value) != 5 || value[2] != ':' {

@@ -46,7 +46,7 @@ async function start() {
       for await (const chunk of req) raw += chunk
       const data = JSON.parse(raw)
       if (data.password !== 'fixture-password') {
-        send({ success: false })
+        send({ success: false, message: '用户名或密码不正确' })
         return
       }
       res.setHeader('Set-Cookie', 'session=' + data.username + '; HttpOnly; Path=/; SameSite=Lax')
@@ -159,6 +159,14 @@ async function selectNav(page: Page, label: string) {
 test('站点和账号管理、签到结果、每日防重复、编辑保留凭据', async ({ page }) => {
   await selectNav(page, '站点管理')
   await page.getByRole('button', { name: '添加站点', exact: true }).click()
+  await page.getByLabel('平台模板').selectOption('wong')
+  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('WONG')
+  await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('https://wzw.pp.ua')
+  await page.getByLabel('平台模板').selectOption('x666')
+  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('薄荷 API 每日签到')
+  await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('https://up.x666.me')
+  await page.getByLabel('平台模板').selectOption('newapi')
+  await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('')
   await page.getByLabel('站点名称', { exact: true }).fill('本地测试站')
   await page.getByLabel('站点地址', { exact: true }).fill(siteURL)
   await page.getByRole('button', { name: '保存站点' }).click()
@@ -172,7 +180,7 @@ test('站点和账号管理、签到结果、每日防重复、编辑保留凭�
   await page.getByLabel(/^API 用户 ID/).fill('alice')
   await expect(page.getByLabel('随机窗口开始')).toHaveValue('08:00')
   await expect(page.getByLabel('随机窗口结束')).toHaveValue('09:00')
-  await expect(page.getByLabel('失败补签截止')).toHaveValue('09:30')
+  await expect(page.getByLabel('失败补签截止')).toHaveValue('09:00')
   await page.getByRole('button', { name: '保存账号' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '签到 演示账号', exact: true })).toBeVisible()
@@ -233,6 +241,33 @@ test('人工浏览器登录并保存独立会话', async ({ page }) => {
   await page.getByRole('button', { name: '签到 login-user', exact: true }).click()
   await expect(page.getByText('已完成', { exact: true })).toBeVisible()
   expect(calls.get('login-user')).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('手动执行失败显示具体原因和处理建议', async ({ page }) => {
+  const account = await seedAccount('错误密码', false)
+  await api('/accounts/' + account.id, 'PUT', {
+    name: account.name,
+    site_id: account.site_id,
+    enabled: account.enabled,
+    schedule: account.schedule,
+    version: account.version,
+    credentials: { method: 'password', username: 'failure-user', password: 'wrong-password' },
+  })
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await page.getByRole('button', { name: '签到 错误密码', exact: true }).click()
+  await expect(page.getByText('需要处理', { exact: true }).first()).toBeVisible()
+  await selectNav(page, '执行记录')
+  await page.getByRole('button', { name: '查看记录 错误密码' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByText('登录失败：用户名或密码不正确', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('提交登录 / OAuth 授权', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('200', { exact: true })).toBeVisible()
+  await expect(dialog.getByText(/核对本站的用户名和密码/)).toBeVisible()
+  await page.screenshot({
+    path: path.join(root, 'artifacts/ui-failure-detail.png'),
+    fullPage: true,
+  })
   expect(errors).toEqual([])
 })
 

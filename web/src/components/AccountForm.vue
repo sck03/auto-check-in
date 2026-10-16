@@ -92,11 +92,20 @@ async function save() {
       <label
         >登录方式<select v-model="form.method">
           <option value="cookie">浏览器会话 / Cookie</option>
-          <option value="password">用户名与密码</option>
-          <option v-if="site?.transport === 'browser'" value="github">GitHub 授权登录</option>
-          <option v-if="site?.transport === 'browser'" value="linuxdo">Linux DO 授权登录</option>
+          <option v-if="site?.adapter !== 'x666'" value="password">用户名与密码</option>
+          <option v-if="site?.transport === 'browser' && site.adapter !== 'x666'" value="github">
+            GitHub 授权登录
+          </option>
+          <option v-if="site?.transport === 'browser' && site.adapter !== 'x666'" value="linuxdo">
+            Linux DO 授权登录
+          </option>
         </select></label
       >
+      <div v-if="site?.adapter === 'x666'" class="notice info">
+        薄荷每日签到在 up.x666.me 完成。保存账号后点击“浏览器登录”，在该页面用 LinuxDO
+        登录并保存会话；也可在更多凭据选项填入该页面的
+        userToken。每日免费抽奖奖励直接到账，无需手动兑换。
+      </div>
       <div v-if="site?.adapter === 'agentrouter'" class="notice info">
         Agent Router 通过重新登录领取签到奖励，请使用密码或 OAuth 登录。首次 OAuth
         登录需要在“浏览器登录”中完成授权。
@@ -114,6 +123,10 @@ async function save() {
             :placeholder="account?.auth.has_password ? '已保存，留空保留' : '输入登录密码'"
         /></label>
       </div>
+      <p v-if="form.method === 'password'" class="field-help">
+        一般无需先手动登录。程序优先复用有效会话，失效时使用密码登录；遇到验证码或二次验证，请点击“浏览器登录”完成后保存。OAuth
+        注册账号需先确认已设置本站密码。
+      </p>
       <template v-if="form.method === 'cookie'">
         <p class="field-help">
           可以先保存账号，再点击“浏览器登录”绑定会话；也可以粘贴已有 Cookie。
@@ -146,7 +159,8 @@ async function save() {
       <details class="advanced">
         <summary>更多凭据选项</summary>
         <label
-          >用户访问令牌 <span class="optional">可选，非模型 API Key</span
+          >{{ site?.adapter === 'x666' ? '签到页面 userToken' : '用户访问令牌' }}
+          <span class="optional">可选，非模型 API Key</span
           ><input
             v-model="form.token"
             type="password"

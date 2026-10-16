@@ -3,6 +3,7 @@
 data/
 /dist/
 artifacts/
+/待手动清理/
 web/node_modules/
 web/dist/*
 !web/dist/.keep

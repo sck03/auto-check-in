@@ -19,6 +19,7 @@ type trackingExecutor struct {
 	origins     map[string]int
 	maxOrigin   int
 	panic       bool
+	deadline    time.Time
 }
 
 func (e *trackingExecutor) Execute(ctx context.Context, site domain.Site, c domain.Credentials) (domain.Result, *domain.Credentials) {
@@ -26,6 +27,7 @@ func (e *trackingExecutor) Execute(ctx context.Context, site domain.Site, c doma
 		panic("test failure")
 	}
 	e.mu.Lock()
+	e.deadline, _ = ctx.Deadline()
 	e.active++
 	e.origins[site.BaseURL]++
 	if e.active > e.max {
@@ -108,5 +110,53 @@ func TestExecutorPanicBecomesUnverified(t *testing.T) {
 	result, c := e.safeExecute(context.Background(), domain.Site{}, domain.Credentials{})
 	if result.Status != domain.Unverified || c != nil {
 		t.Fatal(result)
+	}
+}
+
+func TestAutomaticExecutionDeadlineStopsAtWindowEnd(t *testing.T) {
+	for _, trigger := range []string{"scheduled", "scheduled_retry", "manual"} {
+		t.Run(trigger, func(t *testing.T) {
+			vault, _ := security.NewVault(bytes.Repeat([]byte{3}, 32))
+			repo, err := store.Open(filepath.Join(t.TempDir(), "test.db"), vault)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer repo.Close()
+			ctx := context.Background()
+			now := time.Now()
+			schedule := domain.DefaultSchedule()
+			schedule.WindowStart, schedule.WindowEnd, schedule.RetryUntil = "00:00", "23:58", "23:59"
+			account := domain.Account{ID: "deadline", SiteID: "anyrouter", Name: "deadline", Enabled: true, Schedule: schedule}
+			if _, err := repo.SaveAccount(ctx, account, domain.Credentials{Method: "cookie"}, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := repo.Enqueue(ctx, account.ID, "manual", now); err != nil {
+				t.Fatal(err)
+			}
+			run, err := repo.Claim(ctx, true, now)
+			if err != nil || run == nil {
+				t.Fatal("claim failed", err)
+			}
+			run.Trigger = trigger
+			executor := &trackingExecutor{origins: map[string]int{}}
+			settings := domain.DefaultSettings()
+			settings.TaskTimeoutSeconds = 48 * 60 * 60
+			NewEngine(repo, executor).execute(ctx, *run, settings)
+			_, end := schedule.Bounds(now)
+			if trigger == "scheduled_retry" {
+				_, end = schedule.RetryBounds(now)
+			}
+			if trigger == "manual" {
+				if executor.deadline.Before(now.Add(47 * time.Hour)) {
+					t.Fatal("manual task was restricted to the automatic window")
+				}
+			} else if !now.Before(end) {
+				if !executor.deadline.IsZero() {
+					t.Fatal("expired automatic task reached the executor")
+				}
+			} else if !executor.deadline.Equal(end) {
+				t.Fatalf("automatic deadline=%v, expected window end=%v", executor.deadline, end)
+			}
+		})
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"auto-check-in/internal/domain"
 	"auto-check-in/internal/port"
 	"auto-check-in/internal/provider"
+	"auto-check-in/internal/security"
 )
 
 type LoginInfo struct {
@@ -25,6 +26,7 @@ type loginSession struct {
 	info    LoginInfo
 	session port.InteractiveSession
 	site    domain.Site
+	creds   domain.Credentials
 	cancel  context.CancelFunc
 	closed  bool
 }
@@ -52,6 +54,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 	stopRequest := context.AfterFunc(ctx, cancel)
 	defer stopRequest()
 	var session port.InteractiveSession
+	var credentials domain.Credentials
 	defer func() {
 		if err == nil {
 			return
@@ -62,7 +65,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 		}
 		finishCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		defer done()
-		status, message := domain.Failed, "浏览器启动失败，请检查浏览器路径与运行环境"
+		status, message := domain.Failed, security.Redact("浏览器启动失败："+err.Error(), credentials)
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status, message = domain.Cancelled, "登录启动已取消"
 		}
@@ -80,6 +83,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 	if err != nil {
 		return info, err
 	}
+	credentials = c
 	session, err = s.Browser.OpenInteractive(life, site, c)
 	if err != nil {
 		if life.Err() != nil {
@@ -88,7 +92,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 		if errors.Is(err, port.ErrBrowserBusy) {
 			return info, err
 		}
-		return info, fmt.Errorf("浏览器启动失败，请检查浏览器路径或网络")
+		return info, fmt.Errorf("浏览器启动失败：%s", security.Redact(err.Error(), c))
 	}
 	// A successful session outlives its POST request. Until this point, losing
 	// that request must also stop startup and release the account reservation.
@@ -99,7 +103,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 		return info, err
 	}
 	info = LoginInfo{ID: run.ID, AccountID: accountID, ExpiresAt: expires, Width: 1200, Height: 800, NativeWindow: session.NativeWindow()}
-	entry := &loginSession{info: info, session: session, site: site, cancel: cancel}
+	entry := &loginSession{info: info, session: session, site: site, creds: c, cancel: cancel}
 	s.mu.Lock()
 	s.logins[run.ID] = entry
 	s.mu.Unlock()
@@ -173,11 +177,23 @@ func (s *Service) SaveLogin(ctx context.Context, id string) error {
 	if entry.site.Adapter != "browser" {
 		response, err := entry.session.Request(ctx, "GET", entry.site.UserInfoPath, nil)
 		if err != nil {
-			return fmt.Errorf("请先在站点完成登录并返回站点页面")
+			return fmt.Errorf("请先在站点完成登录并返回站点页面：%s", security.Redact(err.Error(), entry.creds))
+		}
+		if failure := provider.HTTPFailure(response); failure != nil {
+			return fmt.Errorf("登录验证未通过：%s", security.Redact(failure.Message, entry.creds))
 		}
 		payload, err := provider.Decode(response.Body)
 		if err != nil || response.Status < 200 || response.Status >= 300 || payload["success"] != true {
-			return fmt.Errorf("登录尚未通过站点验证，请完成登录后再保存")
+			message, _ := payload["message"].(string)
+			if message == "" {
+				message = "用户信息接口未返回有效的登录成功响应"
+			}
+			return fmt.Errorf("登录尚未通过站点验证（HTTP %d）：%s", response.Status, security.Redact(message, entry.creds))
+		}
+		if entry.site.Adapter == "x666" {
+			if _, ok := payload["can_spin"].(bool); !ok {
+				return fmt.Errorf("薄荷签到会话未通过验证，请在 up.x666.me 完成 LinuxDO 登录")
+			}
 		}
 	}
 	c, err := entry.session.Snapshot(ctx)

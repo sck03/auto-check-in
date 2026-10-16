@@ -4,6 +4,7 @@
 data
 dist
 artifacts
+待手动清理
 web/node_modules
 web/test-results
 web/playwright-report

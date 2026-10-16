@@ -8,6 +8,8 @@
 
 默认数据目录：`%LOCALAPPDATA%\AutoCheckIn`。升级前退出旧程序并保留数据目录。
 
+默认自动签到与重试均在北京时间 08:00–09:00 内进行，成功后当天停止。保存会话或结束签到后，账号浏览器窗口会关闭。旧版本的默认补签截止时间会自动从 09:30 调整为 09:00。
+
 `checkin-server.exe` 是可选的常驻服务程序，使用 `.\checkin-server.exe -open` 启动。桌面程序与服务程序不能同时使用同一数据目录。
 
 ## Linux 服务
@@ -16,9 +18,9 @@
 
 ## 在线文档
 
-- [运行、配置、备份与故障处理](https://github.com/sck03/auto-check-in/blob/v@VERSION@/docs/operations.md)
-- [架构与模块设计](https://github.com/sck03/auto-check-in/blob/v@VERSION@/docs/architecture.md)
-- [完成进度与验收范围](https://github.com/sck03/auto-check-in/blob/v@VERSION@/docs/progress.md)
-- [发布页面与校验和](https://github.com/sck03/auto-check-in/releases/tag/v@VERSION@)
+- [运行、配置、备份与故障处理](https://github.com/sck03/auto-check-in/blob/main/docs/operations.md)
+- [架构与模块设计](https://github.com/sck03/auto-check-in/blob/main/docs/architecture.md)
+- [完成进度与验收范围](https://github.com/sck03/auto-check-in/blob/main/docs/progress.md)
+- [已发布版本与校验和](https://github.com/sck03/auto-check-in/releases)
 
 本包中的 `THIRD_PARTY_NOTICES.md` 合并保留参考项目、Go 和应用依赖的版本及完整许可文本。

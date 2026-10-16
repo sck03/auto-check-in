@@ -109,7 +109,7 @@ async function restore() {
       </div>
       <div class="notice info">
         默认每天 08:00–09:00 分账号随机开始；每天确认成功一次。临时故障允许有限补签，默认截止
-        09:30。
+        09:00。
       </div>
       <div class="field-grid">
         <label

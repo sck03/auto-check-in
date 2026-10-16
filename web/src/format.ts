@@ -1,8 +1,7 @@
 import type { Schedule } from './types'
 
-export function time(value: string | null | undefined, full = false) {
-  if (!value) return '—'
-  return new Intl.DateTimeFormat('zh-CN', {
+const timeFormatter = (full: boolean) =>
+  new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai',
     month: '2-digit',
     day: '2-digit',
@@ -10,7 +9,14 @@ export function time(value: string | null | undefined, full = false) {
     minute: '2-digit',
     ...(full ? { second: '2-digit' } : {}),
     hour12: false,
-  }).format(new Date(value))
+  })
+const shortTime = timeFormatter(false),
+  fullTime = timeFormatter(true)
+const dayFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' })
+
+export function time(value: string | null | undefined, full = false) {
+  if (!value) return '—'
+  return (full ? fullTime : shortTime).format(new Date(value))
 }
 export function quota(value: number | null | undefined, unit: string, ratio: number) {
   if (value == null || !ratio) return '未提供'
@@ -22,8 +28,7 @@ export function scheduleLabel(schedule: Schedule) {
 }
 export function today(value: string | null) {
   if (!value) return false
-  const date = (v: Date) => v.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })
-  return date(new Date(value)) === date(new Date())
+  return dayFormatter.format(new Date(value)) === dayFormatter.format(new Date())
 }
 export const statusLabels: Record<string, string> = {
   ready: '待签到',

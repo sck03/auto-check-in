@@ -44,7 +44,7 @@
     "timezone": "Asia/Shanghai",
     "window_start": "08:00",
     "window_end": "09:00",
-    "retry_until": "09:30"
+    "retry_until": "09:00"
   },
   "version": 0,
   "credentials": {

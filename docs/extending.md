@@ -11,7 +11,6 @@
   "base_url": "https://relay.example.com",
   "login_path": "/login",
   "login_api_path": "/api/user/login",
-  "logout_path": "/api/user/logout",
   "checkin_path": "/api/user/checkin",
   "user_info_path": "/api/user/self",
   "user_header": "New-Api-User",

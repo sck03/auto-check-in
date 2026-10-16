@@ -52,10 +52,10 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 1 {
+	if version > 2 {
 		return fmt.Errorf("数据库版本 %d 高于当前程序支持的版本", version)
 	}
-	if version == 1 {
+	if version == 2 {
 		return nil
 	}
 	tx, err := s.db.Begin()
@@ -63,6 +63,21 @@ func (s *Store) migrate() error {
 		return err
 	}
 	defer tx.Rollback()
+	if version == 1 {
+		// Upgrade only the former default; retain intentionally customized windows.
+		if _, err = tx.Exec(`UPDATE accounts
+SET schedule=json_set(schedule,'$.retry_until','09:00'),version=version+1,updated_at=?
+WHERE json_extract(schedule,'$.timezone')='Asia/Shanghai'
+AND json_extract(schedule,'$.window_start')='08:00'
+AND json_extract(schedule,'$.window_end')='09:00'
+AND json_extract(schedule,'$.retry_until')='09:30'`, millis(time.Now())); err != nil {
+			return err
+		}
+		if _, err = tx.Exec("PRAGMA user_version=2"); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	_, err = tx.Exec(`
 CREATE TABLE sites(id TEXT PRIMARY KEY, config TEXT NOT NULL);
 CREATE TABLE accounts(
@@ -86,7 +101,7 @@ CREATE UNIQUE INDEX one_active_run ON runs(account_id) WHERE status IN ('queued'
 CREATE INDEX run_history ON runs(created_at DESC,id DESC);
 CREATE INDEX account_history ON runs(account_id,created_at DESC);
 CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), config TEXT NOT NULL);
-PRAGMA user_version=1;`)
+PRAGMA user_version=2;`)
 	if err != nil {
 		return err
 	}

@@ -83,6 +83,26 @@ func TestEncryptedStorageAndOptimisticUpdate(t *testing.T) {
 		t.Fatal("secret lost on edit")
 	}
 }
+
+func TestBeforeResetDoesNotConsumeDailyAttempt(t *testing.T) {
+	s, _, _ := testStore(t)
+	a, _ := addAccount(t, s, "early-run")
+	ctx := context.Background()
+	early := testNow.Add(-time.Hour)
+	run, err := s.Enqueue(ctx, a.ID, "manual", early)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish(t, s, run.ID, domain.Result{Status: domain.Failed, Evidence: "before_reset"}, early)
+	saved, err := s.Account(ctx, a.ID)
+	if err != nil || saved.NextRunAt == nil || !saved.NextRunAt.Equal(a.Schedule.ScheduledTime(early, a.ID)) {
+		t.Fatalf("early test displaced daily schedule: %+v %v", saved, err)
+	}
+	queued, err := s.Enqueue(ctx, a.ID, "scheduled", *saved.NextRunAt)
+	if err != nil || queued.Attempt != 1 || queued.Trigger != "scheduled" {
+		t.Fatalf("early test consumed daily attempt: %+v %v", queued, err)
+	}
+}
 func TestConcurrentEnqueueHasOneWinner(t *testing.T) {
 	s, _, _ := testStore(t)
 	a, _ := addAccount(t, s, "a")

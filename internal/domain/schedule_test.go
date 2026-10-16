@@ -58,8 +58,9 @@ func TestWindowAndRetryBoundaries(t *testing.T) {
 	}{
 		{"2026-10-14T23:59:59Z", false, false},
 		{"2026-10-15T00:00:00Z", true, true},
-		{"2026-10-15T01:00:00Z", false, true},
-		{"2026-10-15T01:29:59Z", false, true},
+		{"2026-10-15T00:59:59Z", true, true},
+		{"2026-10-15T01:00:00Z", false, false},
+		{"2026-10-15T01:29:59Z", false, false},
 		{"2026-10-15T01:30:00Z", false, false},
 	} {
 		if s.WithinWindow(instant(tc.at)) != tc.first || s.WithinRetryWindow(instant(tc.at)) != tc.retry {

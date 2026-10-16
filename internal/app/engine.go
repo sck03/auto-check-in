@@ -181,14 +181,20 @@ func (e *Engine) execute(ctx context.Context, run domain.Run, settings domain.Se
 			}
 			if acquired {
 				if wait(ctx, time.Until(g.next)) {
-					inWindow := a.Schedule.WithinWindow(time.Now())
+					now := time.Now()
+					start, end := a.Schedule.Bounds(now)
 					if run.Trigger == "scheduled_retry" {
-						inWindow = a.Schedule.WithinRetryWindow(time.Now())
+						start, end = a.Schedule.RetryBounds(now)
 					}
-					if (run.Trigger == "scheduled" || run.Trigger == "scheduled_retry") && !inWindow {
+					automatic := run.Trigger == "scheduled" || run.Trigger == "scheduled_retry"
+					if automatic && (now.Before(start) || !now.Before(end)) {
 						result = domain.Result{Status: domain.Cancelled, Message: "等待期间已超过本日窗口，安排至下次窗口", Evidence: "schedule_deferred"}
 					} else {
-						taskCtx, cancel := context.WithTimeout(ctx, time.Duration(settings.TaskTimeoutSeconds)*time.Second)
+						deadline := now.Add(time.Duration(settings.TaskTimeoutSeconds) * time.Second)
+						if automatic && end.Before(deadline) {
+							deadline = end
+						}
+						taskCtx, cancel := context.WithDeadline(ctx, deadline)
 						result, updated = e.safeExecute(taskCtx, site, creds)
 						cancel()
 					}

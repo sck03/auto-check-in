@@ -243,6 +243,10 @@ onBeforeUnmount(() => {
       <Icon name="globe" :size="36" />
       <h3>独立登录窗口已打开</h3>
       <p>选择 LinuxDo 或 GitHub 后，在授权页面完成登录和确认。</p>
+      <p class="field-help">
+        若真人验证反复出现，可取消后重新打开；也可在日常浏览器登录后，在账号编辑中填入本站 Cookie 和
+        API 用户 ID。AgentRouter 的每日重新登录仍需密码或 OAuth。
+      </p>
       <button
         class="button secondary"
         :disabled="busy || closing || ended"

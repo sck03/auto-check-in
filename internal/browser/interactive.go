@@ -33,7 +33,7 @@ func (f *Factory) allocateSession(ctx context.Context, site domain.Site, c domai
 	}
 	stop := context.AfterFunc(ctx, cancel)
 	s := &Session{ctx: browserCtx, cancel: func() { stop(); cancel() }, site: site, creds: c,
-		nativeWindow: visible, loginResponses: make(chan port.Response, 8)}
+		nativeWindow: visible, browserToken: c.Storage[site.BaseURL]["userToken"] != "", loginResponses: make(chan port.Response, 8)}
 	s.cleanup = func() {
 		cleanup()
 		if visible {

@@ -26,7 +26,7 @@ func (s *Site) Validate(allowHTTP bool) error {
 	u.Host = strings.ToLower(u.Host)
 	s.BaseURL = u.String()
 	switch s.Adapter {
-	case "newapi", "anyrouter", "agentrouter", "browser":
+	case "newapi", "anyrouter", "agentrouter", "browser", "x666":
 	default:
 		return fmt.Errorf("不支持的站点适配器")
 	}
@@ -46,7 +46,7 @@ func (s *Site) Validate(allowHTTP bool) error {
 	if s.LoginPath == "" || s.LoginAPIPath == "" || s.UserInfoPath == "" {
 		return fmt.Errorf("登录页面、登录接口和用户信息路径不能为空")
 	}
-	if s.Adapter != "agentrouter" && s.CheckInPath == "" {
+	if s.Adapter != "agentrouter" && s.Adapter != "anyrouter" && s.CheckInPath == "" {
 		return fmt.Errorf("签到路径不能为空")
 	}
 	if !headerName.MatchString(s.UserHeader) {
@@ -85,15 +85,18 @@ func ValidatePath(p string) error {
 }
 
 func (c Credentials) Validate(site Site) error {
+	if site.Adapter == "x666" && c.Method != "cookie" {
+		return fmt.Errorf("薄荷签到请选择浏览器会话 / Cookie，在 up.x666.me 用 LinuxDO 登录并保存会话，或填入该页面的 userToken")
+	}
 	switch c.Method {
 	case "cookie", "password", "github", "linuxdo":
 	default:
 		return fmt.Errorf("不支持的登录方式")
 	}
-	if len(c.Username) > 320 || len(c.Password) > 4096 || len(c.CookieHeader) > 32768 || len(c.Token) > 16384 || len(c.APIUser) > 64 {
+	if len(c.Username) > 320 || len(c.Password) > 4096 || len(c.CookieHeader) > 32768 || len(c.Token) > 16384 || len(c.APIUser) > 64 || len(c.UserAgent) > 1024 {
 		return fmt.Errorf("凭据字段过长")
 	}
-	if strings.ContainsAny(c.APIUser+c.Token+c.CookieHeader, "\r\n") {
+	if strings.ContainsAny(c.APIUser+c.Token+c.CookieHeader+c.UserAgent, "\r\n") {
 		return fmt.Errorf("凭据不能包含换行")
 	}
 	if c.CookieHeader != "" {

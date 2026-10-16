@@ -24,7 +24,10 @@ func Run(ctx context.Context, baseURL, token, dataDir, browserPath string, ready
 		return fmt.Errorf("请先安装 Microsoft Edge 或 Google Chrome，或设置 CHECKIN_BROWSER_PATH")
 	}
 	target := baseURL + "/#token=" + url.QueryEscape(token)
-	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	opts, err := browser.LaunchOptions(true)
+	if err != nil {
+		return err
+	}
 	opts = append(opts, chromedp.ExecPath(browserPath), chromedp.UserDataDir(filepath.Join(dataDir, "desktop-browser")),
 		chromedp.Flag("headless", false), chromedp.Flag("app", target), chromedp.WindowSize(1180, 840),
 		chromedp.Flag("no-first-run", true), chromedp.Flag("no-default-browser-check", true))

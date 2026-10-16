@@ -3,11 +3,14 @@ package browser
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/remote"
 )
 
 type browserProcess struct {
@@ -25,6 +28,10 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 	if err := f.lifetime.Err(); err != nil {
 		return nil, err
 	}
+	opts, err := LaunchOptions(visible)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(f.config.TempDir, 0700); err != nil {
 		return nil, err
 	}
@@ -36,7 +43,6 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 	if err != nil {
 		return nil, err
 	}
-	opts := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
 	opts = append(opts, chromedp.ExecPath(f.config.Executable), chromedp.UserDataDir(profile),
 		chromedp.Flag("headless", !visible), chromedp.Flag("hide-scrollbars", !visible),
 		chromedp.Flag("disable-gpu", !visible), chromedp.Flag("disable-dev-shm-usage", !visible),
@@ -66,6 +72,30 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 		return nil, f.startupError(ctx, "浏览器进程初始化", err)
 	}
 	return process, nil
+}
+
+// Human login and the desktop shell use normal browser defaults. In particular,
+// do not disable browser security, background throttling or enable test mode in
+// windows the user operates. Every caller still supplies its own user-data-dir.
+func LaunchOptions(visible bool) ([]chromedp.ExecAllocatorOption, error) {
+	if visible {
+		// Both a debugger pipe and port=0 enable Chromium's automation mode.
+		// A dedicated non-zero loopback port permits normal human interaction.
+		// The allocator reads this child process's endpoint; it never attaches
+		// to the user's existing browser, even if a port is taken before launch.
+		listener, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			return nil, fmt.Errorf("无法创建本地浏览器连接：%w", err)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		if err := listener.Close(); err != nil {
+			return nil, err
+		}
+		return []chromedp.ExecAllocatorOption{chromedp.NoFirstRun, chromedp.NoDefaultBrowserCheck,
+			remote.WebSocket, chromedp.Flag("remote-debugging-address", "127.0.0.1"),
+			chromedp.Flag("remote-debugging-port", strconv.Itoa(port))}, nil
+	}
+	return append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...), nil
 }
 
 func (f *Factory) startupError(ctx context.Context, stage string, err error) error {

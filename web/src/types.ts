@@ -19,11 +19,10 @@ export interface Site {
   id: string
   name: string
   base_url: string
-  adapter: 'newapi' | 'anyrouter' | 'agentrouter' | 'browser'
+  adapter: 'newapi' | 'anyrouter' | 'agentrouter' | 'browser' | 'x666'
   transport: 'http' | 'browser'
   login_path: string
   login_api_path: string
-  logout_path: string
   checkin_path: string
   user_info_path: string
   user_header: string
@@ -79,6 +78,9 @@ export interface Result {
   status: string
   message: string
   evidence: string
+  stage?: string
+  http_status?: number
+  advice?: string
   reward: number | null
   balance_before: number | null
   balance_after: number | null

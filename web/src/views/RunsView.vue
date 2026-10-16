@@ -62,6 +62,35 @@ const evidence: Record<string, string> = {
   configured_page_state: '页面结果标识',
   manual_session: '用户保存的登录会话',
   status_api: '签到状态接口复核',
+  authenticated_visit: '已登录访问（AnyRouter 规则）',
+  fresh_login: '本次重新登录（AgentRouter 规则）',
+  daily_spin_status: '今日免费抽奖记录确认',
+  daily_spin_acknowledgement: '每日免费抽奖响应确认',
+  manual_required: '需要人工处理登录或页面验证',
+  challenge_required: '站点返回真人验证页面',
+  session_invalid: '登录会话验证失败',
+  two_factor_required: '站点要求二次验证',
+  login_rejected: '站点拒绝登录',
+  login_unverified: '登录响应无法确认',
+  provider_rejected: '站点拒绝签到',
+  http_status: 'HTTP 响应状态',
+  invalid_response: '接口响应格式不符',
+  missing_acknowledgement: '缺少业务成功字段',
+  login_without_checkin_proof: '缺少登录身份或签到证据',
+  page_result_missing: '未出现页面结果标识',
+  uncertain_request: '请求已发出，结果未确认',
+  timeout: '执行超时',
+  transport_error: '网络或浏览器执行异常',
+  cancelled_context: '任务被中断',
+  before_reset: '尚未到每日 08:00',
+  login_required: '此站需要重新登录',
+}
+const stages: Record<string, string> = {
+  prepare: '执行前检查',
+  open_session: '打开浏览器 / 建立连接',
+  session_check: '检查已保存的登录会话',
+  login: '提交登录 / OAuth 授权',
+  checkin: '执行并确认签到',
 }
 </script>
 <template>
@@ -182,7 +211,8 @@ const evidence: Record<string, string> = {
       <h3>{{ detail.account_name }}</h3>
       <StatusBadge :status="detail.status" />
     </div>
-    <p class="result-message">{{ detail.result.message || '任务尚未结束' }}</p>
+    <p class="result-message" role="status">{{ detail.result.message || '任务尚未结束' }}</p>
+    <div v-if="detail.result.advice" class="notice info">{{ detail.result.advice }}</div>
     <dl class="details-list">
       <dt>站点</dt>
       <dd>{{ detail.site_name }}</dd>
@@ -190,8 +220,22 @@ const evidence: Record<string, string> = {
       <dd>{{ time(detail.started_at, true) }}</dd>
       <dt>结束时间</dt>
       <dd>{{ time(detail.finished_at, true) }}</dd>
+      <template v-if="detail.result.stage">
+        <dt>执行阶段</dt>
+        <dd>{{ stages[detail.result.stage] || detail.result.stage }}</dd>
+      </template>
+      <template v-if="detail.result.http_status">
+        <dt>HTTP 状态</dt>
+        <dd>{{ detail.result.http_status }}</dd>
+      </template>
       <dt>确认依据</dt>
-      <dd>{{ evidence[detail.result.evidence] || '请结合结果说明核对' }}</dd>
+      <dd>
+        {{
+          evidence[detail.result.evidence] ||
+          detail.result.evidence ||
+          '旧记录未提供，请重新执行获取详情'
+        }}
+      </dd>
       <dt>确认奖励</dt>
       <dd>{{ quota(detail.result.reward, detail.result.unit, detail.result.quota_per_unit) }}</dd>
       <dt>执行前余额</dt>
