@@ -159,9 +159,6 @@ async function selectNav(page: Page, label: string) {
 test('站点和账号管理、签到结果、每日防重复、编辑保留凭据', async ({ page }) => {
   await selectNav(page, '站点管理')
   await page.getByRole('button', { name: '添加站点', exact: true }).click()
-  await page.getByLabel('平台模板').selectOption('wong')
-  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('WONG')
-  await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('https://wzw.pp.ua')
   await page.getByLabel('平台模板').selectOption('x666')
   await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('薄荷 API')
   await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue('https://up.x666.me')
@@ -207,7 +204,7 @@ test('站点和账号管理、签到结果、每日防重复、编辑保留凭�
   expect(errors).toEqual([])
 })
 
-test('六个平台模板分组清晰，修改地址和重新编辑后保持模板身份', async ({ page }) => {
+test('四个平台模板与通用签到方式，修改和重新编辑后保留配置', async ({ page }) => {
   await selectNav(page, '站点管理')
   await page.getByRole('button', { name: '添加站点', exact: true }).click()
   const templates = page.getByLabel('平台模板')
@@ -215,18 +212,14 @@ test('六个平台模板分组清晰，修改地址和重新编辑后保持模�
   await expect(templates.locator('option')).toHaveText([
     'AnyRouter',
     'AgentRouter',
-    'WONG',
     '薄荷 API',
-    'New API',
-    '自定义网页签到',
+    'New API（通用）',
   ])
   for (const [id, name, base, transport] of [
     ['anyrouter', 'AnyRouter', 'https://anyrouter.top', 'browser'],
     ['agentrouter', 'AgentRouter', 'https://agentrouter.org', 'browser'],
     ['x666', '薄荷 API', 'https://up.x666.me', 'browser'],
-    ['newapi', 'New API', '', 'http'],
-    ['browser', '自定义网页签到', '', 'browser'],
-    ['wong', 'WONG', 'https://wzw.pp.ua', 'browser'],
+    ['newapi', 'New API（通用）', '', 'http'],
   ]) {
     await templates.selectOption(id)
     await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue(name)
@@ -246,22 +239,37 @@ test('六个平台模板分组清晰，修改地址和重新编辑后保持模�
   const card = page
     .locator('.site-card')
     .filter({ has: page.getByRole('heading', { name: '我的 WONG 镜像' }) })
-  await expect(card.locator('.tag')).toHaveText('WONG')
+  await expect(card.locator('.tag')).toHaveText('New API（通用）')
   await card.getByRole('button', { name: '编辑站点' }).click()
-  await expect(templates).toHaveValue('wong')
+  await expect(templates).toHaveValue('newapi')
   await expect(templates).toBeEnabled()
   await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue(siteURL)
-  // An unused site can change templates while retaining its custom name and URL.
-  await templates.selectOption('newapi')
+  // The generic template supports both modes without losing the site's identity.
+  await page.getByRole('combobox', { name: '签到方式', exact: true }).selectOption('browser')
   await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('我的 WONG 镜像')
   await expect(page.getByLabel('站点地址', { exact: true })).toHaveValue(siteURL)
-  await expect(page.getByLabel('执行方式')).toHaveValue('http')
+  await expect(page.getByLabel('执行方式')).toHaveValue('browser')
+  await expect(page.getByLabel('执行方式')).toBeDisabled()
+  await expect(page.getByLabel('签到页面', { exact: true })).toHaveValue('/')
+  await page.getByLabel('签到页面', { exact: true }).fill('/daily')
+  await page.getByLabel('签到按钮 CSS 选择器').fill('#checkin')
+  await page.getByLabel('成功结果 CSS 选择器').fill('#success')
   await page.getByRole('button', { name: '保存站点' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect(card.locator('.tag')).toHaveText('New API')
-  expect(
-    (await api('/sites')).find((site: any) => site.name === '我的 WONG 镜像').template_id,
-  ).toBe('newapi')
+  await page.reload()
+  await selectNav(page, '站点管理')
+  await card.getByRole('button', { name: '编辑站点' }).click()
+  await expect(templates).toHaveValue('newapi')
+  await expect(page.getByRole('combobox', { name: '签到方式', exact: true })).toHaveValue('browser')
+  await expect(page.getByLabel('签到页面', { exact: true })).toHaveValue('/daily')
+  await expect(page.getByLabel('签到按钮 CSS 选择器')).toHaveValue('#checkin')
+  await expect(page.getByLabel('成功结果 CSS 选择器')).toHaveValue('#success')
+  await page.screenshot({ path: path.join(root, 'artifacts/ui-page-checkin.png'), fullPage: true })
+  await templates.selectOption('anyrouter')
+  await templates.selectOption('newapi')
+  await expect(page.getByLabel('站点名称', { exact: true })).toHaveValue('我的 WONG 镜像')
+  await expect(page.getByRole('combobox', { name: '签到方式', exact: true })).toHaveValue('newapi')
+  await expect(page.getByLabel('执行方式')).toHaveValue('http')
   expect(errors).toEqual([])
 })
 
@@ -285,6 +293,7 @@ test('已有 OAuth 账号的站点保留浏览器执行方式', async ({ page })
     .getByRole('button', { name: '编辑站点' })
     .click()
   await expect(page.getByLabel('平台模板')).toBeDisabled()
+  await expect(page.getByRole('combobox', { name: '签到方式', exact: true })).toBeDisabled()
   await expect(page.getByLabel('执行方式')).toHaveValue('browser')
   await expect(page.getByLabel('执行方式').locator('option[value="http"]')).toHaveJSProperty(
     'disabled',

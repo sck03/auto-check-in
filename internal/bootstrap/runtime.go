@@ -36,6 +36,19 @@ type Config struct {
 	AllowedOrigins                                                 []string
 }
 
+// DataDirectory is independent of the working directory, including at login.
+func (c Config) DataDirectory() (string, error) {
+	dir := c.DataDir
+	if dir == "" {
+		executable, err := os.Executable()
+		if err != nil {
+			return "", fmt.Errorf("无法确定程序目录，请使用 -data 指定数据目录：%w", err)
+		}
+		dir = filepath.Join(filepath.Dir(executable), "data")
+	}
+	return filepath.Abs(dir)
+}
+
 func EnvConfig() Config {
 	listen := os.Getenv("CHECKIN_LISTEN")
 	if listen == "" {
@@ -90,13 +103,6 @@ func Start(config Config) (rt *Runtime, err error) {
 			release()
 		}
 	}()
-	if config.DataDir == "" {
-		if base, e := os.UserCacheDir(); e == nil {
-			if err = migrateLegacyData(filepath.Join(base, "AutoCheckIn"), dir, config.MasterKey); err != nil {
-				return nil, fmt.Errorf("迁移旧数据失败：%w", err)
-			}
-		}
-	}
 	key, err := security.LoadKey(dir, config.MasterKey)
 	if err != nil {
 		return nil, err
@@ -123,7 +129,7 @@ func Start(config Config) (rt *Runtime, err error) {
 	}
 	var desktopControl port.DesktopIntegration
 	if config.NewDesktop != nil {
-		// Preferences must be loaded after legacy data has been migrated.
+		// Storage and credentials are ready before desktop preferences are loaded.
 		desktopControl, err = config.NewDesktop(dir)
 		if err != nil {
 			return nil, err

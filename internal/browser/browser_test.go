@@ -75,7 +75,8 @@ func TestMintCapturesAndRestoresRewardToken(t *testing.T) {
 	defer server.Close()
 	factory := New(Config{Executable: os.Getenv("CHECKIN_BROWSER_PATH"), TempDir: t.TempDir(), NoSandbox: os.Getenv("CHECKIN_BROWSER_NO_SANDBOX") == "true"})
 	defer factory.Close()
-	site := domain.Templates()[5].Site
+	template, _ := domain.TemplateByID("x666")
+	site := template.Site
 	site.BaseURL = server.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

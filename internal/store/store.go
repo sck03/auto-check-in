@@ -27,6 +27,8 @@ type queryer interface {
 }
 type scanner interface{ Scan(...any) error }
 
+const schemaVersion = 5
+
 func Open(path string, vault *security.Vault) (*Store, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
@@ -48,7 +50,7 @@ func Open(path string, vault *security.Vault) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s := &Store{db: db, vault: vault}
-	if err = s.migrate(); err != nil {
+	if err = s.initialize(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -57,95 +59,29 @@ func Open(path string, vault *security.Vault) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-// Verify checks a migrated copy without changing its execution state.
-func (s *Store) Verify(ctx context.Context) error {
-	var result string
-	if err := s.db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
-		return err
-	}
-	if result != "ok" {
-		return fmt.Errorf("数据库完整性检查失败：%s", result)
-	}
-	return s.checkAccountSecret(ctx)
-}
-
-func (s *Store) migrate() error {
+func (s *Store) initialize() error {
 	var version int
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 4 {
-		return fmt.Errorf("数据库版本 %d 高于当前程序支持的版本", version)
-	}
-	if version == 4 {
+	if version == schemaVersion {
 		return nil
+	}
+	if version != 0 {
+		return fmt.Errorf("数据库版本 %d 与当前版本不兼容，请使用新的空数据目录重新配置", version)
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if version == 1 {
-		// Upgrade only the former default; retain intentionally customized windows.
-		if _, err = tx.Exec(`UPDATE accounts
-SET schedule=json_set(schedule,'$.retry_until','09:00'),version=version+1,updated_at=?
-WHERE json_extract(schedule,'$.timezone')='Asia/Shanghai'
-AND json_extract(schedule,'$.window_start')='08:00'
-AND json_extract(schedule,'$.window_end')='09:00'
-AND json_extract(schedule,'$.retry_until')='09:30'`, millis(time.Now())); err != nil {
-			return err
-		}
-	}
-	if version == 0 {
-		if err = createSchema(tx); err != nil {
-			return err
-		}
-	} else if err = upgradeSiteTemplates(tx); err != nil {
+	if err = createSchema(tx); err != nil {
 		return err
 	}
-	// Queue polling and daily budgets must not scan years of completed history.
-	if _, err = tx.Exec(`
-CREATE INDEX IF NOT EXISTS queued_runs ON runs(created_at,id) WHERE status='queued';
-CREATE INDEX IF NOT EXISTS daily_checkin_attempts ON runs(account_id,started_at) WHERE action='checkin';
-PRAGMA user_version=4;`); err != nil {
+	if _, err = tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return err
 	}
 	return tx.Commit()
-}
-
-func upgradeSiteTemplates(tx *sql.Tx) error {
-	rows, err := tx.Query("SELECT config FROM sites")
-	if err != nil {
-		return err
-	}
-	var changed []domain.Site
-	for rows.Next() {
-		var raw string
-		var site domain.Site
-		if err = rows.Scan(&raw); err == nil {
-			err = json.Unmarshal([]byte(raw), &site)
-		}
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		if site.TemplateID == "" {
-			site.NormalizeTemplate()
-			site.Version++
-			changed = append(changed, site)
-		}
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
-	}
-	for _, site := range changed {
-		if _, err = tx.Exec("UPDATE sites SET config=? WHERE id=?", jsonText(site), site.ID); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func createSchema(tx *sql.Tx) error {
@@ -161,6 +97,7 @@ CREATE TABLE accounts(
 );
 CREATE UNIQUE INDEX account_identity ON accounts(site_id,identity) WHERE identity<>'';
 CREATE INDEX due_accounts ON accounts(enabled,next_run_at);
+CREATE INDEX site_accounts ON accounts(site_id);
 CREATE TABLE runs(
  id TEXT PRIMARY KEY, account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
  account_name TEXT NOT NULL, site_name TEXT NOT NULL, action TEXT NOT NULL,
@@ -171,6 +108,8 @@ CREATE TABLE runs(
 CREATE UNIQUE INDEX one_active_run ON runs(account_id) WHERE status IN ('queued','running','waiting_user');
 CREATE INDEX run_history ON runs(created_at DESC,id DESC);
 CREATE INDEX account_history ON runs(account_id,created_at DESC);
+CREATE INDEX queued_runs ON runs(created_at,id) WHERE status='queued';
+CREATE INDEX daily_checkin_attempts ON runs(account_id,started_at) WHERE action='checkin';
 CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), config TEXT NOT NULL);`)
 	if err != nil {
 		return err
@@ -264,11 +203,6 @@ func (s *Store) SaveSite(ctx context.Context, site domain.Site) (domain.Site, er
 	}
 	defer tx.Rollback()
 	old, err := getSite(ctx, tx, site.ID)
-	if site.TemplateID == "" && site.Adapter == old.Adapter {
-		// Older clients omit this field; preserve the saved template on edits.
-		site.TemplateID = old.TemplateID
-	}
-	site.NormalizeTemplate()
 	if errors.Is(err, domain.ErrNotFound) {
 		if site.Version != 0 {
 			return site, domain.ErrConflict
@@ -292,7 +226,7 @@ func (s *Store) SaveSite(ctx context.Context, site domain.Site) (domain.Site, er
 				return site, err
 			}
 			if attached {
-				return site, fmt.Errorf("%w：已有账号的站点不能更换地址或平台模板", domain.ErrConflict)
+				return site, fmt.Errorf("%w：已有账号的站点不能更换地址、平台模板或签到方式", domain.ErrConflict)
 			}
 		}
 		if old.Transport != site.Transport && site.Transport == "http" {

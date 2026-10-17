@@ -29,7 +29,7 @@ flowchart TD
     Session --> CDP[独立 Chromium 会话]
     App --> Repository[存储接口]
     Engine --> Repository
-    Repository --> SQLite[SQLite / 迁移 / WAL]
+    Repository --> SQLite[SQLite / 事务 / WAL]
     SQLite --> Vault[AES-GCM 凭据保险库]
 ```
 
@@ -42,7 +42,7 @@ flowchart TD
 | `internal/provider` | 适配器注册表、平台协议与结果归一化 | SQL、前端、桌面 API |
 | `internal/transport` | 普通 HTTP 会话 | 调度、界面 |
 | `internal/browser` | Chromium 资源池、账号隔离上下文、登录、人工操作 | 数据库 |
-| `internal/store` | 数据库迁移、事务、持久任务、凭据读写 | 平台适配器、界面 |
+| `internal/store` | 数据库初始化、事务、持久任务、凭据读写 | 平台适配器、界面 |
 | `internal/security` | 密钥、认证辅助、凭据和备份加密 | 业务编排 |
 | `internal/app` | 账号操作、调度、执行和人工登录编排 | 前端、Windows API |
 | `internal/desktop` | 窗口、托盘、当前用户启动项、桌面偏好 | 平台签到协议、SQL |
@@ -138,10 +138,10 @@ WindowsIntegration 通过 `port.DesktopIntegration` 注入 HTTP 入口，Docker/
 - 默认监听 loopback；Docker 暴露界面仍必须使用访问令牌。浏览器入口从 URL fragment 获取首次令牌并立即移除，API 只接受 Authorization 头。
 - TLS 验证保持启用；明文 HTTP 仅由显式部署选项开启。接口路径必须相对同一 origin；HTTP 重定向禁止把凭据带到其他 origin。
 - 本地密钥独立于数据库，默认同处可执行文件旁的 `data`；Windows 文件 ACL 继承部署目录。目录不可写时明确失败，密钥丢失无法恢复原数据库的凭据。
-- 默认目录首次启动可迁移旧缓存目录：持有新旧实例锁，复制 WAL 与配套密钥，验证副本后最后发布数据库。保留原文件供回退，不迁移浏览器临时目录或过期端点；桌面偏好在迁移后加载。
+- 全新安装只初始化指定的数据目录，不导入旧缓存目录；桌面偏好在存储初始化完成后加载。
 - 加密备份使用独立口令派生密钥，可迁移至新数据目录；备份和恢复均检查版本、大小与完整性。
 - 输入大小、JSON 字段、时间范围、路径和选择器长度均有边界。日志不记录密码、Cookie、Token、OAuth code 或页面正文。
-- 数据库迁移按版本执行；SQLite 的外键约束、等待超时和 WAL 设置随每个连接初始化，取消请求导致连接重建时也保持有效。配置与运行状态更新分离；通过契约测试固定适配器语义。
+- 数据库只支持新建和同版本重开，不兼容旧版本。SQLite 的外键约束、等待超时和 WAL 设置随每个连接初始化，取消请求导致连接重建时也保持有效。站点关联账号、待执行队列和每日尝试计数均有专用索引。配置与运行状态更新分离；通过契约测试固定适配器语义。
 
 ## 明确的产品边界
 

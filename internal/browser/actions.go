@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"auto-check-in/internal/domain"
@@ -120,21 +121,30 @@ func (s *Session) PageCheckIn(ctx context.Context) (domain.Result, error) {
 		return domain.Result{}, err
 	}
 	args := jsonJS(s.site.Selectors)
-	check := "(()=>{const s=" + args + ";const visible=q=>q&&[...document.querySelectorAll(q)].some(e=>e.getClientRects().length);if(visible(s.already))return 'already';if(visible(s.success))return 'success';return ''})()"
+	helpers := "const s=" + args + ";const visible=e=>e.getClientRects().length;const find=q=>q&&[...document.querySelectorAll(q)].some(visible);const state=()=>find(s.already)?'already':find(s.success)?'success':'';"
+	check := "(()=>{" + helpers + "return state()})()"
 	var state string
-	ready := "(()=>{const s=" + args + ";return [s.checkin,s.success,s.already].filter(Boolean).some(q=>[...document.querySelectorAll(q)].some(e=>e.getClientRects().length))})()"
-	if err := s.run(ctx, cdpPoll(ready, nil, chromedp.WithPollingTimeout(20*time.Second)), cdpEvaluate(check, &state)); err != nil {
+	ready := "(()=>{" + helpers + "return state()||[...document.querySelectorAll(s.checkin)].some(e=>visible(e)&&!e.disabled)})()"
+	if err := s.pollPage(ctx, ready, nil, 20*time.Second); err != nil {
 		return domain.Result{}, s.loginDiagnostic(ctx, "签到页面未出现配置的按钮或结果标识，请检查页面和 CSS 选择器")
+	}
+	if err := s.run(ctx, cdpEvaluate(check, &state)); err != nil {
+		return domain.Result{}, err
 	}
 	if state != "" {
 		return domain.Result{Status: domain.AlreadyDone, Message: "页面已显示完成状态", Evidence: "configured_page_state"}, nil
 	}
 	var clicked bool
 	click := "(()=>{const s=" + args + ";const el=[...document.querySelectorAll(s.checkin)].find(e=>e.getClientRects().length&&!e.disabled);if(!el)return false;el.click();return true})()"
-	if err := s.run(ctx, cdpEvaluate(click, &clicked)); err != nil || !clicked {
+	if err := s.run(ctx, cdpEvaluate(click, &clicked)); err != nil {
+		// The click may already have submitted a reward before the page or CDP
+		// failed. Retrying automatically could submit it twice.
+		return domain.Result{}, port.ErrUncertain
+	}
+	if !clicked {
 		return domain.Result{}, s.loginDiagnostic(ctx, "签到按钮不存在或不可点击，请检查登录状态及按钮选择器")
 	}
-	if err := s.run(ctx, cdpPoll(check, &state, chromedp.WithPollingTimeout(25*time.Second))); err != nil {
+	if err := s.pollPage(ctx, check, &state, 25*time.Second); err != nil {
 		return domain.Result{Status: domain.Unverified, Message: "已点击签到，但页面未出现配置的结果标识", Evidence: "page_result_missing"}, nil
 	}
 	status := domain.Succeeded
@@ -142,6 +152,31 @@ func (s *Session) PageCheckIn(ctx context.Context) (domain.Result, error) {
 		status = domain.AlreadyDone
 	}
 	return domain.Result{Status: status, Message: "页面已显示配置的签到结果", Evidence: "configured_page_state"}, nil
+}
+
+// Only read-only predicates may be resumed after a navigation replaces the JS
+// context. Clicks and login submissions must never be replayed this way.
+func (s *Session) pollPage(ctx context.Context, expression string, out any, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := s.run(ctx, cdpPoll(expression, out, chromedp.WithPollingInterval(200*time.Millisecond), chromedp.WithPollingTimeout(0)))
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "Cannot find context with specified id") &&
+			!strings.Contains(err.Error(), "Execution context was destroyed") &&
+			!strings.Contains(err.Error(), "Inspected target navigated or closed") {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Session) Screenshot(ctx context.Context) ([]byte, error) {

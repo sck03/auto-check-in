@@ -59,6 +59,18 @@ function templateChange(event: Event) {
   }
   error.value = ''
 }
+function checkInChange(event: Event) {
+  const site = form.value
+  const adapter = (event.target as HTMLSelectElement).value
+  if (!site || attached.value || (adapter !== 'newapi' && adapter !== 'browser')) return
+  const apiPath = currentTemplate.value?.site.checkin_path || '/api/user/checkin'
+  if (adapter === 'browser') {
+    site.transport = 'browser'
+    if (site.checkin_path === apiPath) site.checkin_path = '/'
+  } else if (site.checkin_path === '/') site.checkin_path = apiPath
+  site.adapter = adapter
+  error.value = ''
+}
 async function save() {
   if (!form.value || busy.value) return
   busy.value = true
@@ -134,7 +146,7 @@ async function remove() {
     </article>
     <button class="add-site-card" :disabled="!templates.length" @click="add()">
       <Icon name="plus" :size="26" /><strong>接入更多站点</strong
-      ><span>New API 模板或自定义页面流程</span>
+      ><span>New API 兼容站点与网页按钮签到</span>
     </button>
   </div>
   <div class="notice info">
@@ -171,8 +183,23 @@ async function remove() {
           placeholder="https://example.com"
       /></label>
       <p v-if="attached" class="field-help">
-        已有账号使用此站点。更换地址或平台类型时，请新增站点。
+        已有账号使用此站点。更换地址、平台模板或签到方式时，请新增站点。
       </p>
+      <template v-if="form.template_id === 'newapi'">
+        <label
+          >签到方式<select :value="form.adapter" :disabled="!!attached" @change="checkInChange">
+            <option value="newapi">接口签到（New API）</option>
+            <option value="browser">网页按钮签到</option>
+          </select></label
+        >
+        <p class="field-help">
+          {{
+            form.adapter === 'browser'
+              ? '打开签到页面并点击按钮，需要配置签到按钮和成功结果选择器。'
+              : '调用签到接口并检查今日状态。WONG 使用此方式；OAuth 登录或站点验证需要浏览器执行。'
+          }}
+        </p>
+      </template>
       <label
         >执行方式<select v-model="form.transport" :disabled="form.adapter === 'browser'">
           <option value="http" :disabled="hasOAuth">HTTP 接口（轻量）</option>

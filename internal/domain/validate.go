@@ -25,24 +25,17 @@ func (s *Site) Validate(allowHTTP bool) error {
 	}
 	u.Host = strings.ToLower(u.Host)
 	s.BaseURL = u.String()
-	switch s.Adapter {
-	case "newapi", "anyrouter", "agentrouter", "browser", "x666":
-	default:
-		return fmt.Errorf("不支持的站点适配器")
-	}
-	if s.TemplateID != "" {
-		template, ok := TemplateByID(s.TemplateID)
-		if !ok || template.Site.Adapter != s.Adapter {
-			return fmt.Errorf("平台模板与站点适配器不匹配")
-		}
+	template, ok := TemplateByID(s.TemplateID)
+	if !ok || !template.Supports(s.Adapter) {
+		return fmt.Errorf("请选择有效的平台模板和签到方式")
 	}
 	if s.Transport != "http" && s.Transport != "browser" {
 		return fmt.Errorf("执行方式必须是 http 或 browser")
 	}
 	if s.Adapter == "browser" && s.Transport != "browser" {
-		return fmt.Errorf("页面签到需要浏览器执行方式")
+		return fmt.Errorf("网页按钮签到需要浏览器执行方式")
 	}
-	for _, p := range []string{s.LoginPath, s.LoginAPIPath, s.LogoutPath, s.CheckInPath, s.UserInfoPath} {
+	for _, p := range []string{s.LoginPath, s.LoginAPIPath, s.CheckInPath, s.UserInfoPath} {
 		if p != "" {
 			if err := ValidatePath(p); err != nil {
 				return err
@@ -74,7 +67,7 @@ func (s *Site) Validate(allowHTTP bool) error {
 		}
 	}
 	if s.Adapter == "browser" && (s.Selectors.CheckIn == "" || s.Selectors.Success == "") {
-		return fmt.Errorf("页面签到必须配置签到按钮和成功结果选择器")
+		return fmt.Errorf("网页按钮签到必须配置签到按钮和成功结果选择器")
 	}
 	return nil
 }

@@ -35,9 +35,11 @@
 
 ## 站点模板
 
-`GET /templates` 返回六种模板，显示名称统一读取 `site.name`：`anyrouter`（AnyRouter）、`agentrouter`（AgentRouter）、`wong`（WONG）、`x666`（薄荷 API）、`newapi`（New API）、`browser`（自定义网页签到）。有预设地址的模板归为专用站点，其余为通用模板。
+`GET /templates` 返回四种模板，显示名称统一读取 `site.name`：`anyrouter`（AnyRouter）、`agentrouter`（AgentRouter）、`x666`（薄荷 API）、`newapi`（New API（通用））。前三种为专用站点，后一种为通用模板。
 
-站点的 `template_id` 保存所选模板，`adapter` 决定实际协议；WONG 的 `template_id=wong`、`adapter=newapi`。更新地址或名称不会丢失模板标识。模板与适配器不匹配时拒绝保存。旧请求可省略 `template_id`：更新时沿用原模板，创建时按地址及适配器识别。数据库升级到版本 4 时补齐旧配置，备份也保留该字段。
+`template_id` 必填并保存所选模板，`adapter` 决定签到方式，`transport` 决定 HTTP 或浏览器执行。通用模板允许 `adapter=newapi`（接口签到，含 WONG）和 `adapter=browser`（网页按钮签到，必须 `transport=browser` 并配置按钮和成功结果选择器）；专用模板只允许对应适配器。不匹配、空模板、已移除的 `wong` / `browser` 模板均拒绝保存。不再接受无用的 `logout_path` 字段。
+
+数据库版本为 5，仅支持新建或重开同版本数据库，不进行旧版本迁移。站点名称、接口路径和模板选择随新版备份保存。
 
 有账号引用时不能更换地址、适配器或平台模板；存在 OAuth 账号时不能切换到 HTTP。账号保存会在事务中再次检查当前站点配置，避免并发修改导致 OAuth 账号失去浏览器执行方式。
 

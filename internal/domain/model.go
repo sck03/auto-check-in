@@ -46,7 +46,6 @@ type Site struct {
 	Transport    string    `json:"transport"`
 	LoginPath    string    `json:"login_path"`
 	LoginAPIPath string    `json:"login_api_path"`
-	LogoutPath   string    `json:"logout_path,omitempty"` // Legacy configuration only; never requested.
 	CheckInPath  string    `json:"checkin_path"`
 	UserInfoPath string    `json:"user_info_path"`
 	UserHeader   string    `json:"user_header"`

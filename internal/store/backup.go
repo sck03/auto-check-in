@@ -116,7 +116,6 @@ func (s *Store) Restore(ctx context.Context, b domain.Backup) error {
 		return err
 	}
 	for _, site := range b.Sites {
-		site.NormalizeTemplate()
 		if _, err = tx.ExecContext(ctx, "INSERT INTO sites(id,config) VALUES(?,?)", site.ID, jsonText(site)); err != nil {
 			return mapError(err)
 		}

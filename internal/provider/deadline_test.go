@@ -25,8 +25,9 @@ func (s *expiringSession) Request(ctx context.Context, method, _ string, _ any) 
 }
 
 func TestDeadlineDoesNotStartAnotherSiteRequest(t *testing.T) {
-	for _, index := range []int{2, 5} {
-		site := domain.Templates()[index].Site
+	for _, id := range []string{"newapi", "x666"} {
+		template, _ := domain.TemplateByID(id)
+		site := template.Site
 		t.Run(site.Adapter, func(t *testing.T) {
 			session := &expiringSession{}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)

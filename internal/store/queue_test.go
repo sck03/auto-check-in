@@ -113,29 +113,6 @@ func TestDatabasePathRetainsSpecialCharacters(t *testing.T) {
 	}
 }
 
-func TestVersionTwoDatabaseReceivesQueueIndexes(t *testing.T) {
-	s, path, vault := testStore(t)
-	addAccount(t, s, "existing")
-	if _, err := s.db.Exec("DROP INDEX queued_runs; DROP INDEX daily_checkin_attempts; PRAGMA user_version=2"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatal(err)
-	}
-	upgraded, err := Open(path, vault)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer upgraded.Close()
-	var indexes int
-	if err := upgraded.db.QueryRow("SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name IN ('queued_runs','daily_checkin_attempts')").Scan(&indexes); err != nil || indexes != 2 {
-		t.Fatalf("upgrade did not create history indexes: %d, %v", indexes, err)
-	}
-	if err := upgraded.Verify(context.Background()); err != nil {
-		t.Fatal("upgrade damaged existing credentials", err)
-	}
-}
-
 func BenchmarkHistoryQueries(b *testing.B) {
 	for _, query := range []string{"idle_queue", "daily_attempts"} {
 		b.Run(query, func(b *testing.B) {
@@ -159,6 +136,40 @@ func BenchmarkHistoryQueries(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
+			}
+		})
+	}
+}
+
+func TestQueuedAutomaticWorkExpiresAtNine(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		name := "first"
+		if retry {
+			name = "retry"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := testStore(t)
+			a, _ := addAccount(t, s, "a")
+			ctx := context.Background()
+			if retry {
+				first, err := s.Enqueue(ctx, a.ID, "manual", testNow)
+				if err != nil {
+					t.Fatal(err)
+				}
+				finish(t, s, first.ID, domain.Result{Status: domain.Failed, Retryable: true}, testNow)
+			}
+			end := time.Date(2026, 10, 15, 1, 0, 0, 0, time.UTC)
+			queued, err := s.Enqueue(ctx, a.ID, "scheduled", end.Add(-time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed, err := s.Claim(ctx, true, end)
+			if err != nil || claimed != nil {
+				t.Fatalf("automatic work started at 09:00: %+v %v", claimed, err)
+			}
+			run, err := getRun(ctx, s.db, queued.ID)
+			if err != nil || run.Status != domain.Cancelled || run.StartedAt != nil {
+				t.Fatalf("expired queue entry was not cancelled: %+v %v", run, err)
 			}
 		})
 	}

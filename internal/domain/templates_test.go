@@ -13,15 +13,12 @@ func TestTemplateCatalog(t *testing.T) {
 		if site.BaseURL == "" {
 			site.BaseURL = "https://example.test"
 		}
-		if site.Adapter == "browser" {
-			site.Selectors.CheckIn, site.Selectors.Success = "#checkin", "#success"
-		}
 		if err := site.Validate(false); err != nil {
 			t.Fatalf("%s defaults cannot be saved: %v", template.ID, err)
 		}
 	}
-	if len(seen) != 6 {
-		t.Fatalf("expected six distinct templates, got %d", len(seen))
+	if len(seen) != 4 || seen["wong"] || seen["browser"] {
+		t.Fatalf("expected four unified templates, got %v", seen)
 	}
 	copy := Templates()
 	copy[0].Site.Name = "custom"
@@ -32,39 +29,43 @@ func TestTemplateCatalog(t *testing.T) {
 	}
 }
 
-func TestLegacyTemplateIdentity(t *testing.T) {
-	for _, test := range []struct {
-		name, adapter, base, template, wantName string
-	}{
-		{"Any Router", "anyrouter", "https://mirror.test", "anyrouter", "AnyRouter"},
-		{"Agent Router", "agentrouter", "https://agentrouter.org", "agentrouter", "AgentRouter"},
-		{"薄荷 API 每日签到", "x666", "https://up.x666.me", "x666", "薄荷 API"},
-		{"我的 WONG", "newapi", "https://WZW.PP.UA:443/", "wong", "我的 WONG"},
-		{"自定义站点", "newapi", "https://custom.test", "newapi", "自定义站点"},
-		{"自定义页面", "browser", "https://custom.test", "browser", "自定义页面"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			site := Site{Name: test.name, Adapter: test.adapter, BaseURL: test.base, CheckInPath: "/custom"}
-			site.NormalizeTemplate()
-			if site.TemplateID != test.template || site.Name != test.wantName || site.BaseURL != test.base || site.CheckInPath != "/custom" {
-				t.Fatalf("legacy configuration was not preserved: %+v", site)
+func TestTemplateMustMatchCheckInMode(t *testing.T) {
+	for _, template := range Templates() {
+		for _, adapter := range []string{"newapi", "browser", "anyrouter", "agentrouter", "x666", "unknown", ""} {
+			site := template.Site
+			site.BaseURL, site.CheckInPath = "https://example.test", "/checkin"
+			site.Adapter, site.Transport = adapter, "browser"
+			site.Selectors.CheckIn, site.Selectors.Success = "#checkin", "#success"
+			want := adapter == template.Site.Adapter || (template.ID == "newapi" && adapter == "browser")
+			if err := site.Validate(false); (err == nil) != want {
+				t.Errorf("template=%s adapter=%s: %v", template.ID, adapter, err)
 			}
-			site.BaseURL, site.Name = "https://another.test", "我的新名称"
-			site.NormalizeTemplate()
-			if site.TemplateID != test.template || site.Name != "我的新名称" {
-				t.Fatal("normalization replaced explicit identity or a custom name")
-			}
-		})
+		}
+	}
+	template, _ := TemplateByID("newapi")
+	for _, id := range []string{"", "missing", "wong", "browser"} {
+		site := template.Site
+		site.BaseURL, site.TemplateID = "https://example.test", id
+		if site.Validate(false) == nil {
+			t.Fatalf("accepted unknown or removed template %q", id)
+		}
 	}
 }
 
-func TestTemplateMustMatchAdapter(t *testing.T) {
-	template, _ := TemplateByID("wong")
-	for _, id := range []string{"missing", "agentrouter", "x666"} {
-		site := template.Site
-		site.TemplateID = id
-		if site.Validate(false) == nil {
-			t.Fatalf("accepted incompatible template %q", id)
-		}
+func TestPageCheckInRequiresBrowserAndSelectors(t *testing.T) {
+	template, _ := TemplateByID("newapi")
+	site := template.Site
+	site.BaseURL, site.Adapter, site.CheckInPath = "https://example.test", "browser", "/daily"
+	site.Selectors.CheckIn, site.Selectors.Success = "#checkin", "#success"
+	if site.Validate(false) == nil {
+		t.Fatal("page mode accepted HTTP transport")
+	}
+	site.Transport = "browser"
+	if err := site.Validate(false); err != nil {
+		t.Fatal(err)
+	}
+	site.Selectors.Success = ""
+	if site.Validate(false) == nil {
+		t.Fatal("page mode accepted a missing success selector")
 	}
 }

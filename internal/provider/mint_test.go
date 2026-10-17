@@ -51,7 +51,8 @@ func TestMintDailySpin(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			site := domain.Templates()[5].Site
+			template, _ := domain.TemplateByID("x666")
+			site := template.Site
 			site.BaseURL, site.Transport = server.URL, "http"
 			r, _ := (&Runner{Factory: transport.Factory{}}).Execute(context.Background(), site, domain.Credentials{Method: "cookie", Token: "reward-token"})
 			mu.Lock()
