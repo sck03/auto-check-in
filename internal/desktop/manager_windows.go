@@ -143,13 +143,11 @@ func (m *Manager) Action(action string) error {
 			settings, err := m.service.Repo.Settings(m.ctx)
 			if err == nil {
 				settings.SchedulerEnabled = !settings.SchedulerEnabled
-				_, err = m.service.Repo.SaveSettings(m.ctx, settings)
-				m.service.Engine.Notify()
+				_, err = m.service.SaveSettings(m.ctx, settings)
 			}
 			if err != nil {
 				m.report(err)
 			}
-			m.syncMenus()
 		}
 	default:
 		return fmt.Errorf("不支持的桌面操作")
@@ -210,7 +208,6 @@ func (m *Manager) Run(icon []byte) {
 		m.mu.Unlock()
 		m.wg.Add(1)
 		go func() { defer m.wg.Done(); m.loop() }()
-		m.enqueue(m.syncMenus)
 		if !m.startHidden {
 			_ = m.Action("show")
 		}
@@ -225,25 +222,43 @@ func (m *Manager) Run(icon []byte) {
 	m.wg.Wait()
 }
 func (m *Manager) loop() {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	ticks := 0
+	settingsChanged := m.service.SettingsChanged()
+	m.syncMenus()
+	var ticker *time.Ticker
+	var ticks <-chan time.Time
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
+	updateWindowTimer := func() {
+		m.mu.Lock()
+		watch := m.windowOpen && m.prefs.MinimizeToTray
+		m.mu.Unlock()
+		if watch && ticker == nil {
+			ticker = time.NewTicker(time.Second)
+			ticks = ticker.C
+		} else if !watch && ticker != nil {
+			ticker.Stop()
+			ticker, ticks = nil, nil
+		}
+	}
 	for {
+		updateWindowTimer()
 		select {
 		case <-m.ctx.Done():
 			return
 		case fn := <-m.commands:
 			fn()
-		case <-ticker.C:
+		case <-settingsChanged:
+			settingsChanged = m.service.SettingsChanged()
+			m.syncMenus()
+		case <-ticks:
 			m.mu.Lock()
 			pid, enabled, open := m.windowPID, m.prefs.MinimizeToTray, m.windowOpen
 			m.mu.Unlock()
 			if open && enabled && minimized(findWindow(pid)) {
 				m.hide()
-			}
-			ticks++
-			if ticks%5 == 0 {
-				m.syncMenus()
 			}
 		}
 	}

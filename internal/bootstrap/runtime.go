@@ -24,6 +24,7 @@ import (
 	"auto-check-in/internal/provider"
 	"auto-check-in/internal/security"
 	"auto-check-in/internal/store"
+	"auto-check-in/internal/systemtime"
 	"auto-check-in/internal/transport"
 	"auto-check-in/web"
 )
@@ -77,6 +78,7 @@ type Runtime struct {
 	cancel    context.CancelFunc
 	closeOnce sync.Once
 	release   func()
+	stopClock func()
 	Errors    chan error
 }
 
@@ -156,6 +158,13 @@ func Start(config Config) (rt *Runtime, err error) {
 		listener.Close()
 		return nil, err
 	}
+	rt.stopClock, err = systemtime.Watch(service.Engine.Notify)
+	if err != nil {
+		cancel()
+		browsers.Close()
+		listener.Close()
+		return nil, fmt.Errorf("无法监听系统时间变化：%w", err)
+	}
 	service.Engine.Start(ctx)
 	go func() {
 		if e := rt.server.Serve(listener); e != nil && !errors.Is(e, http.ErrServerClosed) {
@@ -172,6 +181,7 @@ func (rt *Runtime) Close() {
 		if err := rt.server.Shutdown(ctx); err != nil {
 			_ = rt.server.Close()
 		}
+		rt.stopClock()
 		rt.cancel()
 		rt.Service.CloseLogins()
 		rt.Service.Engine.Wait()

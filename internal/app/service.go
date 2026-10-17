@@ -14,21 +14,46 @@ import (
 )
 
 type Service struct {
-	Repo        port.Repository
-	Engine      *Engine
-	Browser     port.BrowserFactory
-	AllowHTTP   bool
-	ctx         context.Context
-	loginCancel context.CancelFunc
-	closing     bool
-	mu          sync.Mutex
-	logins      map[string]*loginSession
-	wg          sync.WaitGroup
+	Repo         port.Repository
+	Engine       *Engine
+	Browser      port.BrowserFactory
+	AllowHTTP    bool
+	ctx          context.Context
+	loginCancel  context.CancelFunc
+	closing      bool
+	mu           sync.Mutex
+	logins       map[string]*loginSession
+	settingsWake chan struct{}
+	wg           sync.WaitGroup
 }
 
 func New(ctx context.Context, repo port.Repository, executor port.Executor, browser port.BrowserFactory, allowHTTP bool) *Service {
 	loginCtx, loginCancel := context.WithCancel(ctx)
-	return &Service{Repo: repo, Engine: NewEngine(repo, executor), Browser: browser, AllowHTTP: allowHTTP, ctx: loginCtx, loginCancel: loginCancel, logins: map[string]*loginSession{}}
+	return &Service{Repo: repo, Engine: NewEngine(repo, executor), Browser: browser, AllowHTTP: allowHTTP, ctx: loginCtx, loginCancel: loginCancel, logins: map[string]*loginSession{}, settingsWake: make(chan struct{})}
+}
+
+// SettingsChanged broadcasts only committed settings changes, not task activity.
+func (s *Service) SettingsChanged() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.settingsWake
+}
+func (s *Service) notifySettings() {
+	s.mu.Lock()
+	close(s.settingsWake)
+	s.settingsWake = make(chan struct{})
+	s.mu.Unlock()
+	s.Engine.Notify()
+}
+func (s *Service) SaveSettings(ctx context.Context, settings domain.Settings) (domain.Settings, error) {
+	if err := settings.Validate(); err != nil {
+		return settings, err
+	}
+	saved, err := s.Repo.SaveSettings(ctx, settings)
+	if err == nil {
+		s.notifySettings()
+	}
+	return saved, err
 }
 func (s *Service) SaveSite(ctx context.Context, id string, site domain.Site) (domain.Site, error) {
 	if err := site.Validate(s.AllowHTTP); err != nil {
@@ -158,7 +183,7 @@ func (s *Service) Restore(ctx context.Context, archive []byte, password string) 
 		return err
 	}
 	if err = s.Repo.Restore(ctx, b); err == nil {
-		s.Engine.Notify()
+		s.notifySettings()
 	}
 	return err
 }

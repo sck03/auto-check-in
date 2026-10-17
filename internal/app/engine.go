@@ -62,14 +62,7 @@ func (e *Engine) waitForWork(ctx context.Context, wake <-chan struct{}) bool {
 	}
 }
 
-func (e *Engine) Tick(ctx context.Context, now time.Time) error {
-	settings, err := e.repo.Settings(ctx)
-	if err != nil {
-		return err
-	}
-	if !settings.SchedulerEnabled {
-		return nil
-	}
+func (e *Engine) enqueueDue(ctx context.Context, now time.Time) error {
 	ids, err := e.repo.DueAccounts(ctx, now)
 	if err != nil {
 		return err
@@ -100,25 +93,26 @@ func (e *Engine) scheduleLoop(ctx context.Context) {
 		wake := e.scheduleWake
 		e.wakeMu.Unlock()
 		now := time.Now().UTC()
-		err := e.Tick(ctx, now)
-		if !now.Before(nextPrune) {
-			if settings, err := e.repo.Settings(ctx); err == nil {
-				if err = e.repo.Prune(ctx, now.AddDate(0, 0, -settings.RetentionDays)); err != nil && ctx.Err() == nil {
+		settings, err := e.repo.Settings(ctx)
+		if err == nil {
+			if !now.Before(nextPrune) {
+				if err := e.repo.Prune(ctx, now.AddDate(0, 0, -settings.RetentionDays)); err != nil && ctx.Err() == nil {
 					slog.Error("history cleanup failed", "error", err)
 				}
+				// One attempt at startup and per Beijing day. Maintenance never
+				// needs an hourly timer or repeated settings reads.
+				_, nextPrune = domain.DayBounds(now)
 			}
-			nextPrune = now.Add(time.Hour)
+			if settings.SchedulerEnabled {
+				err = e.enqueueDue(ctx, now)
+			}
 		}
 		deadline := nextPrune
-		if err == nil {
-			var settings domain.Settings
-			settings, err = e.repo.Settings(ctx)
-			if err == nil && settings.SchedulerEnabled {
-				var next *time.Time
-				next, err = e.repo.NextScheduled(ctx)
-				if next != nil && next.Before(deadline) {
-					deadline = *next
-				}
+		if err == nil && settings.SchedulerEnabled {
+			var next *time.Time
+			next, err = e.repo.NextScheduled(ctx)
+			if next != nil && next.Before(deadline) {
+				deadline = *next
 			}
 		}
 		if err != nil {

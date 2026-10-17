@@ -16,6 +16,15 @@ type Schedule struct {
 	RetryUntil  string `json:"retry_until"`
 }
 
+var scheduleLocation = func() *time.Location {
+	// Embedded tzdata makes the schedule independent of the host.
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		panic(err)
+	}
+	return loc
+}()
+
 func DefaultSchedule() Schedule {
 	return Schedule{Timezone: "Asia/Shanghai", WindowStart: "08:00", WindowEnd: "09:00", RetryUntil: "09:00"}
 }
@@ -55,9 +64,8 @@ func (s Schedule) Validate() error {
 	return nil
 }
 func DayBounds(now time.Time) (time.Time, time.Time) {
-	loc, _ := time.LoadLocation("Asia/Shanghai")
-	local := now.In(loc)
-	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+	local := now.In(scheduleLocation)
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, scheduleLocation)
 	return start, start.AddDate(0, 0, 1)
 }
 func (s Schedule) Bounds(now time.Time) (time.Time, time.Time) {

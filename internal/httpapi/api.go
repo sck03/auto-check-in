@@ -241,16 +241,11 @@ func (a *API) routes() {
 		if !readJSON(w, r, &v, 1<<16) {
 			return
 		}
-		if e := v.Validate(); e != nil {
-			fail(w, e)
-			return
-		}
-		v, e := s.Repo.SaveSettings(r.Context(), v)
+		v, e := s.SaveSettings(r.Context(), v)
 		if e != nil {
 			fail(w, e)
 			return
 		}
-		s.Engine.Notify()
 		respond(w, 200, v)
 	})
 	m.HandleFunc("POST /api/v1/runs", func(w http.ResponseWriter, r *http.Request) {
