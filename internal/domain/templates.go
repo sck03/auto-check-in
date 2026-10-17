@@ -23,7 +23,7 @@ func TemplateByID(id string) (Template, bool) {
 	return Template{}, false
 }
 
-// A single generic template supports API requests and explicit page actions.
+// A single generic template supports API requests and page actions.
 func (t Template) Supports(adapter string) bool {
 	return t.Site.Adapter == adapter || (t.ID == "newapi" && adapter == "browser")
 }
@@ -52,7 +52,7 @@ func buildTemplates() []Template {
 	templates := []Template{
 		{ID: "anyrouter", Description: "北京时间 08:00 后访问已登录页面并确认身份，无需调用签到接口。", Site: any},
 		{ID: "agentrouter", Description: "北京时间 08:00 后重新登录触发签到，使用密码或已授权的 OAuth 会话。", Site: agent},
-		{ID: "newapi", Description: "适用于 WONG 等 New API 兼容站点；默认调用签到接口，也可选择网页按钮签到并配置页面选择器。", Site: base},
+		{ID: "newapi", Description: "适用于 WONG 等 New API 兼容站点；默认调用签到接口，也可选择网页按钮签到，自动识别常见签到按钮。", Site: base},
 		{ID: "x666", Description: "在 up.x666.me 使用 LinuxDO 登录并保存会话；每天执行一次免费抽奖，奖励直接到账。", Site: mint},
 	}
 	for i := range templates {

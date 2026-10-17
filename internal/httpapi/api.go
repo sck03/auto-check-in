@@ -225,6 +225,7 @@ func (a *API) routes() {
 			fail(w, e)
 			return
 		}
+		s.Engine.Notify()
 		w.WriteHeader(204)
 	})
 	m.HandleFunc("GET /api/v1/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +284,7 @@ func (a *API) routes() {
 			fail(w, e)
 			return
 		}
+		s.Engine.Notify()
 		w.WriteHeader(204)
 	})
 	m.HandleFunc("POST /api/v1/accounts/{id}/login", func(w http.ResponseWriter, r *http.Request) {

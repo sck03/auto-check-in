@@ -195,7 +195,7 @@ async function remove() {
         <p class="field-help">
           {{
             form.adapter === 'browser'
-              ? '打开签到页面并点击按钮，需要配置签到按钮和成功结果选择器。'
+              ? '自动识别常见签到按钮及明确的签到结果；无法识别时可填写 CSS 选择器。'
               : '调用签到接口并检查今日状态。WONG 使用此方式；OAuth 登录或站点验证需要浏览器执行。'
           }}
         </p>
@@ -240,16 +240,17 @@ async function remove() {
           <label
             >签到按钮 CSS 选择器<input
               v-model="form.selectors.checkin"
-              required
-              placeholder="例如 #checkin-button"
+              placeholder="留空自动识别，例如 #checkin-button"
           /></label>
           <label
             >成功结果 CSS 选择器<input
               v-model="form.selectors.success"
-              required
-              placeholder="例如 .checkin-success"
+              placeholder="留空识别签到提示，例如 .checkin-success"
           /></label>
           <label>已签到标识 CSS 选择器<input v-model="form.selectors.already" /></label>
+          <p class="field-help">
+            选择器可留空；多个候选按钮时会停止并提示。填写结果选择器后仅以配置的标识确认完成。页面按钮使用网站自己的请求，不猜测或遍历未知签到接口。
+          </p>
         </template>
       </details>
       <details class="advanced">

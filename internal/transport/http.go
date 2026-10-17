@@ -145,6 +145,9 @@ func (s *HTTPSession) Request(ctx context.Context, method, path string, body any
 		return out, err
 	}
 	req.Header.Set("Accept", "application/json")
+	if method == http.MethodGet {
+		req.Header.Set("Cache-Control", "no-store")
+	}
 	req.Header.Set("Origin", s.site.BaseURL)
 	req.Header.Set("Referer", s.site.BaseURL+"/")
 	req.Header.Set("User-Agent", "AutoCheckIn/1.0")

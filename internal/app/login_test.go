@@ -61,6 +61,7 @@ func TestLoginStartupFollowsRequestCancellation(t *testing.T) {
 		return nil, ctx.Err()
 	}}
 	service, id := loginService(t, browser)
+	wake := service.Engine.subscription()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan error, 1)
@@ -82,6 +83,11 @@ func TestLoginStartupFollowsRequestCancellation(t *testing.T) {
 	account, err := service.Repo.Account(context.Background(), id)
 	if err != nil || account.ActiveRunID != "" {
 		t.Fatalf("cancelled startup left account locked: %+v, %v", account, err)
+	}
+	select {
+	case <-wake:
+	default:
+		t.Fatal("cancelled login did not wake the scheduler after releasing the account")
 	}
 }
 

@@ -66,9 +66,6 @@ func (s *Site) Validate(allowHTTP bool) error {
 			return fmt.Errorf("页面选择器过长")
 		}
 	}
-	if s.Adapter == "browser" && (s.Selectors.CheckIn == "" || s.Selectors.Success == "") {
-		return fmt.Errorf("网页按钮签到必须配置签到按钮和成功结果选择器")
-	}
 	return nil
 }
 

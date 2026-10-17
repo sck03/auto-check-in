@@ -79,6 +79,7 @@ type Repository interface {
 	Settings(context.Context) (domain.Settings, error)
 	SaveSettings(context.Context, domain.Settings) (domain.Settings, error)
 	DueAccounts(context.Context, time.Time) ([]string, error)
+	NextScheduled(context.Context) (*time.Time, error)
 	Enqueue(context.Context, string, string, time.Time) (domain.Run, error)
 	Claim(context.Context, bool, time.Time) (*domain.Run, error)
 	Finish(context.Context, string, domain.Result, *domain.Credentials, domain.Settings, time.Time) error

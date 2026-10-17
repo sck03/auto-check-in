@@ -81,7 +81,11 @@ func (s *Service) SaveAccount(ctx context.Context, id string, input domain.Accou
 	a.Enabled = input.Enabled
 	a.Schedule = input.Schedule
 	a.Version = input.Version
-	return s.Repo.SaveAccount(ctx, a, c, time.Now().UTC())
+	saved, err := s.Repo.SaveAccount(ctx, a, c, time.Now().UTC())
+	if err == nil {
+		s.Engine.Notify()
+	}
+	return saved, err
 }
 
 type EnqueueResult struct {
@@ -153,7 +157,10 @@ func (s *Service) Restore(ctx context.Context, archive []byte, password string) 
 	if err = s.validateBackup(&b); err != nil {
 		return err
 	}
-	return s.Repo.Restore(ctx, b)
+	if err = s.Repo.Restore(ctx, b); err == nil {
+		s.Engine.Notify()
+	}
+	return err
 }
 func (s *Service) validateBackup(b *domain.Backup) error {
 	if b.Version != 1 || len(b.Sites) > 1000 || len(b.Accounts) > 10000 || len(b.Runs) > 100000 {

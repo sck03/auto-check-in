@@ -74,14 +74,14 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 	valid := false
 	if site.Adapter != "browser" && site.Adapter != "x666" && !adapter.RequiresFreshLogin {
 		resp, e := session.Request(ctx, "GET", site.UserInfoPath, nil)
-		if e == nil {
-			before = Balance(resp)
-			valid = authenticated(resp, c.APIUser)
+		if e != nil {
+			return failure(e), nil
 		}
-		if !valid && c.Method == "cookie" {
-			if e != nil {
-				return failure(e), nil
-			}
+		before = Balance(resp)
+		valid = authenticated(resp, c.APIUser)
+		// A timeout, outage, challenge or wrong identity is not proof that the
+		// saved session expired. Reauthentication can revoke other sessions.
+		if !valid && (c.Method == "cookie" || !sessionExpired(resp)) {
 			if f := HTTPFailure(resp); f != nil {
 				return *f, nil
 			}
@@ -131,7 +131,12 @@ func verifyStatus(ctx context.Context, session port.Session, site domain.Site) b
 	if err != nil || payload["success"] != true {
 		return false
 	}
-	stats, ok := dataObject(payload)["stats"].(map[string]any)
+	data := dataObject(payload)
+	// WONG reports today's state directly instead of New API's monthly stats.
+	if checked, ok := data["checked_in"].(bool); ok {
+		return checked
+	}
+	stats, ok := data["stats"].(map[string]any)
 	return ok && stats["checked_in_today"] == true
 }
 

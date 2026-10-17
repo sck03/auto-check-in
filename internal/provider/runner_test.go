@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,5 +150,66 @@ func TestNewAPIRechecksAmbiguousResponse(t *testing.T) {
 	defer mu.Unlock()
 	if r.Evidence != "status_api" || !r.Complete() || posts != 1 {
 		t.Fatalf("must confirm without repeating POST: %+v posts=%d", r, posts)
+	}
+}
+
+func TestSessionFailureDoesNotForceLogin(t *testing.T) {
+	for _, scenario := range []struct {
+		name   string
+		status int
+		body   string
+		login  bool
+	}{
+		{"unavailable", 503, `{"success":false}`, false},
+		{"rate_limited", 429, `{"success":false}`, false},
+		{"challenge", 403, `<html>Just a moment</html>`, false},
+		{"invalid_response", 200, `<html>maintenance</html>`, false},
+		{"wrong_account", 200, `{"success":true,"data":{"id":2}}`, false},
+		{"unauthorized", 401, `{"success":false}`, true},
+		{"expired_json", 200, `{"success":false,"message":"登录状态已过期"}`, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var logins atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/user/login" {
+					logins.Add(1)
+					fmt.Fprint(w, `{"success":false,"message":"fixture stopped after login"}`)
+					return
+				}
+				w.WriteHeader(scenario.status)
+				fmt.Fprint(w, scenario.body)
+			}))
+			defer server.Close()
+			site := domain.Templates()[2].Site
+			site.BaseURL = server.URL
+			result, _ := (&Runner{Factory: transport.Factory{}}).Execute(context.Background(), site, domain.Credentials{Method: "password", Username: "user", Password: "secret", APIUser: "1", CookieHeader: "session=saved"})
+			if result.Complete() || (logins.Load() == 1) != scenario.login {
+				t.Fatalf("unnecessary or missing login: calls=%d result=%+v", logins.Load(), result)
+			}
+		})
+	}
+}
+
+func TestWongStatusAvoidsDuplicateSubmission(t *testing.T) {
+	var posts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+		}
+		if r.URL.Path == "/api/user/self" {
+			fmt.Fprint(w, `{"success":true,"data":{"id":1}}`)
+		} else {
+			if r.Header.Get("Cache-Control") != "no-store" {
+				t.Error("status request permits cached results")
+			}
+			fmt.Fprint(w, `{"success":true,"data":{"checked_in":true,"enabled":true}}`)
+		}
+	}))
+	defer server.Close()
+	site := domain.Templates()[2].Site
+	site.BaseURL = server.URL
+	result, _ := (&Runner{Factory: transport.Factory{}}).Execute(context.Background(), site, domain.Credentials{Method: "cookie"})
+	if result.Status != domain.AlreadyDone || posts.Load() != 0 {
+		t.Fatalf("duplicate WONG check-in: %+v, posts=%d", result, posts.Load())
 	}
 }

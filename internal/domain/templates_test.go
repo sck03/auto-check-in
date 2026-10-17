@@ -52,7 +52,7 @@ func TestTemplateMustMatchCheckInMode(t *testing.T) {
 	}
 }
 
-func TestPageCheckInRequiresBrowserAndSelectors(t *testing.T) {
+func TestPageCheckInAllowsAutomaticRecognitionWithBrowser(t *testing.T) {
 	template, _ := TemplateByID("newapi")
 	site := template.Site
 	site.BaseURL, site.Adapter, site.CheckInPath = "https://example.test", "browser", "/daily"
@@ -65,7 +65,8 @@ func TestPageCheckInRequiresBrowserAndSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	site.Selectors.Success = ""
-	if site.Validate(false) == nil {
-		t.Fatal("page mode accepted a missing success selector")
+	site.Selectors.CheckIn = ""
+	if err := site.Validate(false); err != nil {
+		t.Fatal("automatic page recognition was rejected", err)
 	}
 }

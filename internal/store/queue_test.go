@@ -43,6 +43,46 @@ func TestClaimSkipsExpiredWorkWithoutDelayingManualRun(t *testing.T) {
 	}
 }
 
+func TestNextScheduledExcludesDisabledBlockedAndActiveAccounts(t *testing.T) {
+	s, _, _ := testStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"disabled", "blocked", "queued", "running", "login", "ready"} {
+		addAccount(t, s, id)
+	}
+	if _, err := s.db.Exec("UPDATE accounts SET enabled=0 WHERE id='disabled'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec("UPDATE accounts SET next_run_at=0 WHERE id='blocked'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enqueue(ctx, "running", "manual", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if run, err := s.Claim(ctx, true, testNow); err != nil || run == nil {
+		t.Fatal("missing running task", err)
+	}
+	if _, err := s.Enqueue(ctx, "queued", "manual", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginLogin(ctx, "login", testNow); err != nil {
+		t.Fatal(err)
+	}
+	want := testNow.Add(time.Hour)
+	if _, err := s.db.Exec("UPDATE accounts SET next_run_at=? WHERE id='ready'", millis(want)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.NextScheduled(ctx)
+	if err != nil || got == nil || !got.Equal(want) {
+		t.Fatalf("next=%v want=%v err=%v", got, want, err)
+	}
+	if _, err := s.Enqueue(ctx, "ready", "manual", testNow); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := s.NextScheduled(ctx); next != nil || err != nil {
+		t.Fatalf("no eligible tasks: %v %v", next, err)
+	}
+}
+
 func TestReducedRetryBudgetDoesNotLeaveAccountPermanentlyDue(t *testing.T) {
 	s, _, _ := testStore(t)
 	ctx := context.Background()

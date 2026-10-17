@@ -3,6 +3,7 @@ package provider
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"auto-check-in/internal/domain"
@@ -13,6 +14,22 @@ import (
 func authenticated(resp port.Response, expectedID string) bool {
 	id := transport.UserID(resp.Body)
 	return resp.Status >= 200 && resp.Status < 300 && id != "" && (expectedID == "" || id == expectedID)
+}
+
+var expiredSessionPattern = regexp.MustCompile(`(?i)(未登[录陆]|登录.{0,8}(过期|失效)|会话.{0,8}(过期|失效)|session.{0,8}expired|unauthorized|not logged in)`)
+
+func sessionExpired(resp port.Response) bool {
+	if challengeResponse(resp.Body) {
+		return false
+	}
+	if resp.Status == http.StatusUnauthorized {
+		return true
+	}
+	if resp.Status != http.StatusOK && resp.Status != http.StatusForbidden {
+		return false
+	}
+	payload, err := Decode(resp.Body)
+	return err == nil && payload["success"] == false && expiredSessionPattern.MatchString(message(payload))
 }
 
 func loginFailure(resp port.Response) *domain.Result {

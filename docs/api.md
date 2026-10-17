@@ -37,7 +37,7 @@
 
 `GET /templates` 返回四种模板，显示名称统一读取 `site.name`：`anyrouter`（AnyRouter）、`agentrouter`（AgentRouter）、`x666`（薄荷 API）、`newapi`（New API（通用））。前三种为专用站点，后一种为通用模板。
 
-`template_id` 必填并保存所选模板，`adapter` 决定签到方式，`transport` 决定 HTTP 或浏览器执行。通用模板允许 `adapter=newapi`（接口签到，含 WONG）和 `adapter=browser`（网页按钮签到，必须 `transport=browser` 并配置按钮和成功结果选择器）；专用模板只允许对应适配器。不匹配、空模板、已移除的 `wong` / `browser` 模板均拒绝保存。不再接受无用的 `logout_path` 字段。
+`template_id` 必填并保存所选模板，`adapter` 决定签到方式，`transport` 决定 HTTP 或浏览器执行。通用模板允许 `adapter=newapi`（接口签到，含 WONG）和 `adapter=browser`（网页按钮签到，必须 `transport=browser`）；专用模板只允许对应适配器。网页签到的 `selectors.checkin` 留空时自动识别常见按钮；`selectors.success` / `selectors.already` 均留空时识别明确签到提示，填写其中任一项后仅使用配置的结果标识。多个按钮候选或无效 CSS 返回需要处理；点击后缺少结果返回 `unverified`。不匹配、空模板、已移除的 `wong` / `browser` 模板均拒绝保存。不再接受无用的 `logout_path` 字段。
 
 数据库版本为 5，仅支持新建或重开同版本数据库，不进行旧版本迁移。站点名称、接口路径和模板选择随新版备份保存。
 

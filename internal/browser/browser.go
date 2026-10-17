@@ -358,6 +358,9 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 	}
 	_ = s.refreshUserID(ctx)
 	headers := map[string]string{"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+	if method == http.MethodGet {
+		headers["Cache-Control"] = "no-store"
+	}
 	if body != nil {
 		headers["Content-Type"] = "application/json"
 	}
@@ -368,7 +371,7 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 		headers["Authorization"] = "Bearer " + s.creds.Token
 	}
 	args := map[string]any{"origin": s.site.BaseURL, "path": path, "method": method, "headers": headers, "body": body}
-	expression := "(async()=>{const a=" + jsonJS(args) + ";if(location.origin!==a.origin){return {status:0,body:''}};const r=await fetch(a.path,{method:a.method,headers:a.headers,credentials:'include',redirect:'error',body:a.body===null?undefined:JSON.stringify(a.body)});const body=await r.text();if(body.length>1048576)throw Error('response too large');return {status:r.status,body:body,retry:Number(r.headers.get('Retry-After'))||0}})()"
+	expression := "(async()=>{const a=" + jsonJS(args) + ";if(location.origin!==a.origin){return {status:0,body:''}};const r=await fetch(a.path,{method:a.method,headers:a.headers,credentials:'include',cache:'no-store',redirect:'error',body:a.body===null?undefined:JSON.stringify(a.body)});const body=await r.text();if(body.length>1048576)throw Error('response too large');return {status:r.status,body:body,retry:Number(r.headers.get('Retry-After'))||0}})()"
 	var value struct {
 		Status int    `json:"status"`
 		Body   string `json:"body"`

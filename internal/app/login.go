@@ -70,6 +70,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 			status, message = domain.Cancelled, "登录启动已取消"
 		}
 		_ = s.Repo.FinishLogin(finishCtx, run.ID, nil, status, message, time.Now().UTC())
+		s.Engine.Notify()
 	}()
 	a, err := s.Repo.Account(ctx, accountID)
 	if err != nil {
@@ -238,6 +239,7 @@ func (s *Service) closeLogin(entry *loginSession, c *domain.Credentials, status,
 	s.mu.Lock()
 	delete(s.logins, entry.info.ID)
 	s.mu.Unlock()
+	s.Engine.Notify()
 	return err
 }
 func (s *Service) CloseLogins() {

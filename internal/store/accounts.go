@@ -183,10 +183,17 @@ func (s *Store) DeleteAccount(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+const scheduledAccounts = ` FROM accounts a WHERE enabled=1 AND next_run_at>0
+AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.account_id=a.id AND r.status IN ('queued','running','waiting_user'))`
+
+func (s *Store) NextScheduled(ctx context.Context) (*time.Time, error) {
+	var next int64
+	err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MIN(next_run_at),0)"+scheduledAccounts).Scan(&next)
+	return fromMillis(next), err
+}
+
 func (s *Store) DueAccounts(ctx context.Context, now time.Time) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM accounts a WHERE enabled=1 AND next_run_at>0 AND next_run_at<=?
-AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.account_id=a.id AND r.status IN ('queued','running','waiting_user'))
-ORDER BY next_run_at LIMIT 100`, millis(now))
+	rows, err := s.db.QueryContext(ctx, "SELECT id"+scheduledAccounts+" AND next_run_at<=? ORDER BY next_run_at LIMIT 100", millis(now))
 	if err != nil {
 		return nil, err
 	}

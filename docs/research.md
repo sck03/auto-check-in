@@ -1,6 +1,6 @@
 # 开源方案核对与采用决策
 
-核对日期：2026-10-16。需求来源：前序方案讨论与本次用户补充要求。界面按**简单小工具**设计，并补充每日成功一次、分类重试、资源优化、Windows 托盘、自启动和 GitHub 发布。
+核对日期：2026-10-17。需求来源：前序方案讨论与本次用户补充要求。界面按**简单小工具**设计，并补充每日成功一次、分类重试、资源优化、Windows 托盘、自启动和 GitHub 发布。
 
 本线程后续明确：目标是所有账号**每天签到成功一次**，首次在北京时间 08:00–09:00 内分别随机安排，失败应分类处理。最终默认策略是明确的临时故障最多重试 2 次，间隔约 5 / 15 分钟，补签截止 09:00；登录失效和结果不明不盲目重复。参考项目中的 24 小时冷却模型不作为本项目默认调度规则。
 
@@ -15,7 +15,9 @@
 | [newapi-ai-check-in](https://github.com/aceHubert/newapi-ai-check-in/tree/a01c232672686ce66ac06194a7f13b04ca734a28) | `a01c232` | Provider 配置、WONG 签到路径、薄荷独立签到域名及 userToken、状态与抽奖响应、许可证 | WONG 模板及薄荷专用适配器的协议参考 |
 | [Newapi-checkin](https://github.com/Jasonliu-0/Newapi-checkin/tree/49089a5bbe4c063fdb814e77d27168e55bed1700) | `49089a5` | 会话复用、密码续期、签到状态、错误分类、奖励字段和许可证 | 普通 New API 兼容性与故障说明参考 |
 
-研究副本在本地 `.research/`，不进入构建、发布包和版本控制。原项目的 PRD 包含浏览器扩展迁移规划，不能当成 Flutter 已实现功能的证明。
+历史研究副本不进入构建、发布包和版本控制。本轮通过 GitHub API 和固定 SHA 的原始文件核对，未保留新的仓库副本。原项目的 PRD 包含浏览器扩展迁移规划，不能当成 Flutter 已实现功能的证明。
+
+2026-10-17 再次查询 Fl API Hub、newapi-ai-check-in、Newapi-checkin 的默认分支，HEAD 分别仍为上表的 `94ef25b`、`a01c232`、`49089a5`。重点复核 [WONG 适配器](https://github.com/RebornQ/fl_api_hub/blob/94ef25b0381d54ab11d1631d569a5cca4451eb84/lib/core/network/adapters/wong_api_adapter.dart)、[前台调度器](https://github.com/RebornQ/fl_api_hub/blob/94ef25b0381d54ab11d1631d569a5cca4451eb84/lib/core/scheduler/foreground_scheduler.dart) 和 [Provider 配置](https://github.com/aceHubert/newapi-ai-check-in/blob/a01c232672686ce66ac06194a7f13b04ca734a28/PROVIDERS.json)。补充 WONG 的 `data.checked_in` 及不缓存状态查询；保留声明式已知接口。本项目独立实现按最近任务时间等待和保守的页面按钮识别，未照搬周期轮询，也未引入猜测接口或自动重放请求的逻辑。
 
 ## 必须修正的认识
 
