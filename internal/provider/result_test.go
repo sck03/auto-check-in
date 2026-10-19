@@ -31,6 +31,7 @@ func TestStrictResultMatrix(t *testing.T) {
 		{"agent missing", "agentrouter", `{"success":true,"data":{"quota":12500000}}`, domain.Unverified, 200},
 		{"agent login rule", "agentrouter", `{"success":true,"data":{"id":12}}`, domain.Succeeded, 200},
 		{"cloudflare HTML", "newapi", `<!doctype html><html><title>Just a moment...</title></html>`, domain.NeedsAttention, 403},
+		{"aliyun HTML", "agentrouter", `<!doctype html><meta name="aliyun_waf_aa" content="fixture">`, domain.NeedsAttention, 200},
 		{"turnstile", "newapi", `{"success":false,"message":"Turnstile token 为空"}`, domain.NeedsAttention, 200},
 	}
 	for _, tc := range tests {

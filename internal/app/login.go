@@ -85,6 +85,9 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 		return info, err
 	}
 	credentials = c
+	if site.Adapter == "agentrouter" {
+		c = provider.FreshLoginCredentials(site, c)
+	}
 	session, err = s.Browser.OpenInteractive(life, site, c)
 	if err != nil {
 		if life.Err() != nil {
@@ -175,7 +178,10 @@ func (s *Service) SaveLogin(ctx context.Context, id string) error {
 	if entry.closed {
 		return domain.ErrNotFound
 	}
-	if entry.site.Adapter != "browser" {
+	// AgentRouter rewards a fresh login. Its observed login response also proves
+	// the new session when a separate profile request is intercepted by its WAF.
+	confirmed := entry.site.Adapter == "agentrouter" && entry.session.ConfirmedLogin(ctx)
+	if entry.site.Adapter != "browser" && !confirmed {
 		response, err := entry.session.Request(ctx, "GET", entry.site.UserInfoPath, nil)
 		if err != nil {
 			return fmt.Errorf("请先在站点完成登录并返回站点页面：%s", security.Redact(err.Error(), entry.creds))

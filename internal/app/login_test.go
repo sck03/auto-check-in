@@ -29,9 +29,10 @@ type idleLoginSession struct {
 	ctx context.Context
 }
 
-func (*idleLoginSession) NativeWindow() bool      { return false }
-func (s *idleLoginSession) Done() <-chan struct{} { return s.ctx.Done() }
-func (*idleLoginSession) Close()                  {}
+func (*idleLoginSession) NativeWindow() bool                  { return false }
+func (*idleLoginSession) ConfirmedLogin(context.Context) bool { return false }
+func (s *idleLoginSession) Done() <-chan struct{}             { return s.ctx.Done() }
+func (*idleLoginSession) Close()                              {}
 
 func loginService(t *testing.T, browser port.BrowserFactory) (*Service, string) {
 	t.Helper()
@@ -51,6 +52,98 @@ func loginService(t *testing.T, browser port.BrowserFactory) (*Service, string) 
 	service := New(context.Background(), repo, nil, browser, true)
 	t.Cleanup(service.CloseLogins)
 	return service, a.ID
+}
+
+type confirmedLoginSession struct {
+	idleLoginSession
+	confirmed bool
+	requests  int
+}
+
+func (s *confirmedLoginSession) ConfirmedLogin(context.Context) bool { return s.confirmed }
+func (s *confirmedLoginSession) Request(context.Context, string, string, any) (port.Response, error) {
+	s.requests++
+	return port.Response{Status: 200, Body: []byte(`<!doctype html><meta name="aliyun_waf_aa" content="fixture">`)}, nil
+}
+func (*confirmedLoginSession) Snapshot(context.Context) (domain.Credentials, error) {
+	return domain.Credentials{Method: "linuxdo", APIUser: "7", Cookies: []domain.Cookie{{Name: "session", Value: "fresh", Domain: "agentrouter.org", Path: "/", HTTPOnly: true, Secure: true}}, Storage: map[string]map[string]string{"https://agentrouter.org": {"user": `{"id":7}`}}}, nil
+}
+
+func TestSaveAgentRouterObservedLoginWithoutRedundantProfileRequest(t *testing.T) {
+	for _, confirmed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unconfirmed", true: "confirmed"}[confirmed], func(t *testing.T) {
+			var session *confirmedLoginSession
+			browser := &loginBrowser{open: func(ctx context.Context, site domain.Site, c domain.Credentials) (port.InteractiveSession, error) {
+				if c.APIUser != "" || len(c.Storage[site.BaseURL]) != 0 || len(c.Cookies) != 1 || c.Cookies[0].Domain != "linux.do" {
+					t.Fatal("interactive AgentRouter login must clear its old session and preserve the identity provider")
+				}
+				session = &confirmedLoginSession{idleLoginSession: idleLoginSession{ctx: ctx}, confirmed: confirmed}
+				return session, nil
+			}}
+			service, _ := loginService(t, browser)
+			ctx := context.Background()
+			credentials := domain.Credentials{Method: "linuxdo", APIUser: "7", Cookies: []domain.Cookie{
+				{Name: "session", Value: "old", Domain: "agentrouter.org", Path: "/"},
+				{Name: "provider", Value: "saved", Domain: "linux.do", Path: "/"},
+			}, Storage: map[string]map[string]string{"https://agentrouter.org": {"user": `{"id":7}`}}}
+			account, err := service.Repo.SaveAccount(ctx, domain.Account{Name: "agent", SiteID: "agentrouter", Schedule: domain.DefaultSchedule()}, credentials, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := service.StartLogin(ctx, account.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = service.SaveLogin(ctx, info.ID)
+			if (err == nil) != confirmed {
+				t.Fatalf("confirmed=%v save error=%v", confirmed, err)
+			}
+			if confirmed {
+				if session.requests != 0 {
+					t.Fatal("confirmed fresh login made an unnecessary user-info request")
+				}
+				saved, err := service.Repo.Credentials(ctx, account.ID)
+				if err != nil || saved.APIUser != "7" || len(saved.Cookies) != 1 {
+					t.Fatal("confirmed session was not persisted")
+				}
+			} else if session.requests != 1 {
+				t.Fatal("unconfirmed login skipped verification")
+			}
+		})
+	}
+}
+
+func TestInteractiveLoginPreservesOtherSiteSessions(t *testing.T) {
+	for _, siteID := range []string{"anyrouter", "newapi"} {
+		t.Run(siteID, func(t *testing.T) {
+			browser := &loginBrowser{open: func(ctx context.Context, site domain.Site, c domain.Credentials) (port.InteractiveSession, error) {
+				if c.CookieHeader != "session=saved" || c.APIUser != "7" || c.Storage[site.BaseURL]["user"] != `{"id":7}` {
+					t.Fatal("opening an ordinary site's login window discarded its saved session")
+				}
+				return &idleLoginSession{ctx: ctx}, nil
+			}}
+			service, _ := loginService(t, browser)
+			ctx := context.Background()
+			site, err := service.Repo.Site(ctx, siteID)
+			if errors.Is(err, domain.ErrNotFound) {
+				template, _ := domain.TemplateByID(siteID)
+				site = template.Site
+				site.ID, site.BaseURL, site.TemplateID, site.Transport = siteID, "https://fixture.example", siteID, "browser"
+				site, err = service.Repo.SaveSite(ctx, site)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			creds := domain.Credentials{Method: "linuxdo", CookieHeader: "session=saved", APIUser: "7", Storage: map[string]map[string]string{site.BaseURL: {"user": `{"id":7}`}}}
+			account, err := service.Repo.SaveAccount(ctx, domain.Account{Name: "reuse", SiteID: siteID, Schedule: domain.DefaultSchedule()}, creds, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.StartLogin(ctx, account.ID); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestLoginStartupFollowsRequestCancellation(t *testing.T) {

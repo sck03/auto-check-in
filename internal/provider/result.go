@@ -101,7 +101,7 @@ func challengeResponse(body []byte) bool {
 	if !strings.Contains(text, "<html") && !strings.Contains(text, "<!doctype") {
 		return false
 	}
-	for _, marker := range []string{"cf-chl-", "/cdn-cgi/challenge-platform/", "just a moment", "verify you are human", "验证您是真人", "acw_sc__v2"} {
+	for _, marker := range []string{"cf-chl-", "/cdn-cgi/challenge-platform/", "just a moment", "verify you are human", "验证您是真人", "acw_sc__v2", "aliyun_waf_"} {
 		if strings.Contains(text, marker) {
 			return true
 		}

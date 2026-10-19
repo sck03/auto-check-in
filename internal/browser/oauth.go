@@ -14,7 +14,7 @@ import (
 var oauthScript string
 
 func (s *Session) oauthDriver(method string) string {
-	return "(" + oauthScript + ")(" + jsonJS(s.site.Selectors) + "," + jsonJS(method) + "," + jsonJS(s.site.BaseURL) + "," + jsonJS(s.site.LoginPath) + ")"
+	return "(" + oauthScript + ")(" + jsonJS(s.site.Selectors) + "," + jsonJS(method) + "," + jsonJS(s.site.BaseURL) + "," + jsonJS(s.site.LoginPath) + "," + jsonJS(s.site.Adapter == "agentrouter") + ")"
 }
 
 func (s *Session) selectOAuthEntry(ctx context.Context, method string) error {
@@ -38,22 +38,42 @@ func (s *Session) selectOAuthEntry(ctx context.Context, method string) error {
 	return fmt.Errorf("%s 登录入口不可用（%s），请检查选择器或在登录窗口选择对应方式：%w", method, state, port.ErrManualRequired)
 }
 
-// Run only while automatic Login is waiting for its callback. Interactive
-// windows select the provider, leaving passwords, consent and 2FA to the user.
-func (s *Session) continueOAuth(ctx context.Context, attempted *bool) error {
-	if *attempted || (s.creds.Method != "github" && s.creds.Method != "linuxdo") {
-		return nil
-	}
-	driver := s.oauthDriver(s.creds.Method)
+// Both interactive login and automatic execution stop after a single consent
+// action. Password/2FA entry stays with the user; consent resumes afterwards.
+func (s *Session) continueOAuth(ctx context.Context, method string) (bool, error) {
+	driver := s.oauthDriver(method)
 	var state string
 	if err := s.run(ctx, cdpEvaluate(driver+".inspect('consent')", &state)); err != nil || state != "ready" {
-		return nil // Navigation may temporarily replace the document.
+		return state == "returned", nil // Navigation may replace the document.
 	}
-	*attempted = true
 	if err := s.run(ctx, cdpEvaluate(driver+".click('consent')", &state, oauthUserGesture)); err != nil {
-		return port.ErrUncertain
+		return true, port.ErrUncertain
 	}
-	return nil
+	return state == "clicked" || state == "returned", nil
+}
+
+func (s *Session) assistOAuth(ctx context.Context, method string) {
+	if err := s.selectOAuthEntry(ctx, method); err != nil {
+		return
+	}
+	ticker := time.NewTicker(750 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if id := s.confirmedUser.Load(); id != nil && *id != "" {
+				return
+			}
+			op, cancel := context.WithTimeout(ctx, 2*time.Second)
+			done, err := s.continueOAuth(op, method)
+			cancel()
+			if done || err != nil {
+				return
+			}
+		}
+	}
 }
 
 func oauthUserGesture(params *runtime.EvaluateParams) {

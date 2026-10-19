@@ -19,6 +19,15 @@ import (
 func (s *Session) Login(ctx context.Context) (port.Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The runner reuses a valid session and calls Login only when reauthentication
+	// is needed. Drop the stale UI identity then, so the SPA cannot redirect the
+	// login page back to an expired console. Keep all provider and site cookies.
+	if s.site.Adapter == "anyrouter" || s.site.Adapter == "newapi" {
+		expr := "if(location.origin===" + jsonJS(s.site.BaseURL) + ")localStorage.removeItem('user')"
+		if err := s.runSite(ctx, cdpEvaluate(expr, nil)); err != nil {
+			return port.Response{}, err
+		}
+	}
 	if err := s.runSite(ctx, cdpNavigateDOMReady(s.site.BaseURL+s.site.LoginPath)); err != nil {
 		return port.Response{}, err
 	}
@@ -72,17 +81,20 @@ drained:
 		case <-timer.C:
 			return port.Response{}, s.loginDiagnostic(ctx, "提交登录后 45 秒未收到登录接口响应；可能停留在授权页、验证页，或登录接口路径不匹配")
 		case <-ticker.C:
-			op, cancel := context.WithTimeout(ctx, 3*time.Second)
-			err := s.continueOAuth(op, &consentAttempted)
-			cancel()
-			if err != nil {
-				return port.Response{}, err
+			if !consentAttempted && (s.creds.Method == "github" || s.creds.Method == "linuxdo") {
+				op, cancel := context.WithTimeout(ctx, 3*time.Second)
+				done, err := s.continueOAuth(op, s.creds.Method)
+				cancel()
+				consentAttempted = done
+				if err != nil {
+					return port.Response{}, err
+				}
 			}
 			// Do not repeatedly fetch user info or collect diagnostics while the
 			// only page is still at an external identity provider.
 			var atSite bool
-			op, cancel = context.WithTimeout(ctx, 3*time.Second)
-			err = s.runSite(op, cdpEvaluate("location.origin==="+jsonJS(s.site.BaseURL), &atSite))
+			op, cancel := context.WithTimeout(ctx, 3*time.Second)
+			err := s.runSite(op, cdpEvaluate("location.origin==="+jsonJS(s.site.BaseURL), &atSite))
 			cancel()
 			if err != nil || !atSite {
 				continue
@@ -112,7 +124,7 @@ func (s *Session) loginDiagnostic(ctx context.Context, fallback string) error {
 	expr := `(()=>{const visible=e=>e&&e.getClientRects().length;
 const text=(document.title+' '+(document.body?.innerText||'').slice(0,12000)).toLowerCase();
 let reason='';
-if(/just a moment|verify you are human|验证您是真人|请验证您|checking your browser/.test(text)||[...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]')].some(visible))reason='Cloudflare / Turnstile 真人验证未完成，请在浏览器登录窗口处理';
+if(/just a moment|请稍候|verify you are human|验证您是真人|请验证您|checking your browser/.test(text)||[...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"]')].some(visible))reason='Cloudflare / Turnstile 真人验证未完成，请在浏览器登录窗口处理';
 else if([...document.querySelectorAll('input[autocomplete="one-time-code"],input[name="otp"],input[name="code"]')].some(visible))reason='站点要求验证码或二次验证，请在浏览器登录窗口完成';
 else {const alert=[...document.querySelectorAll('[role="alert"],.semi-toast-content,.ant-message-notice-content,.el-message__content')].find(visible);if(alert)reason='页面提示：'+alert.innerText.slice(0,200)}
 return (reason?reason+'；':'')+'当前页面 '+location.origin+location.pathname})()`

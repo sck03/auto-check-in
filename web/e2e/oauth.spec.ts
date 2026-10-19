@@ -7,8 +7,36 @@ const defaults = {
   github: 'a[href*="/oauth/github"],button[data-provider="github"]',
   linuxdo: 'a[href*="/oauth/linuxdo"],button[data-provider="linuxdo"]',
 }
-function driver(method: string, selectors = defaults) {
-  return `(${script})(${JSON.stringify(selectors)},${JSON.stringify(method)},${JSON.stringify(origin)},'/login')`
+
+test('LinuxDO 真实允许链接无需表单，按应用信息和官方地址确认', async ({ page }) => {
+  const url =
+    'https://connect.linux.do/oauth2/authorize?response_type=code&client_id=fixture&state=fixture'
+  await load(
+    page,
+    url,
+    `<div class="oauth-panel">
+    <div class="oauth-app-info"><a href="https://agentrouter.org/">https://agentrouter.org/</a></div>
+    <div class="oauth-actions"><a class="btn-pill btn-pill-primary" href="/oauth2/approve/fixture" onclick="event.preventDefault();document.body.dataset.allowed='yes'">允许</a>
+    <a href="/oauth2/decline/fixture">拒绝</a></div></div>`,
+  )
+  expect(await page.locator('form').count()).toBe(0)
+  expect(await page.evaluate(driver('linuxdo') + ".inspect('consent')")).toBe('ready')
+  expect(await page.evaluate(driver('linuxdo') + ".click('consent')")).toBe('clicked')
+  expect(await page.evaluate('document.body.dataset.allowed')).toBe('yes')
+  await page
+    .locator('.oauth-app-info a')
+    .evaluate((el) => el.setAttribute('href', 'https://example.org/'))
+  expect(await page.evaluate(driver('linuxdo') + ".inspect('consent')")).toBe('')
+  await page
+    .locator('.oauth-app-info a')
+    .evaluate((el) => el.setAttribute('href', 'https://agentrouter.org/'))
+  await page
+    .locator('.btn-pill-primary')
+    .evaluate((el) => el.setAttribute('href', 'https://example.org/oauth2/approve/fixture'))
+  expect(await page.evaluate(driver('linuxdo') + ".inspect('consent')")).toBe('')
+})
+function driver(method: string, selectors = defaults, waitForStatus = false) {
+  return `(${script})(${JSON.stringify(selectors)},${JSON.stringify(method)},${JSON.stringify(origin)},'/login',${waitForStatus})`
 }
 async function load(page: Page, url: string, html: string) {
   await page.route('**/*', (route) =>
@@ -18,6 +46,31 @@ async function load(page: Page, url: string, html: string) {
 }
 
 for (const method of ['github', 'linuxdo']) {
+  test(`AgentRouter ${method} 等待配置就绪后再点击可用按钮`, async ({ page }) => {
+    await load(
+      page,
+      origin + '/login',
+      `<button onclick="document.body.dataset.clicked='yes'">使用 ${method} 继续</button>`,
+    )
+    const expression = driver(method, defaults, true)
+    for (const client of [undefined, '', 'undefined', 'null']) {
+      await page.evaluate(
+        ({ method, client }) =>
+          localStorage.setItem('status', JSON.stringify({ [method + '_client_id']: client })),
+        { method, client },
+      )
+      expect(await page.evaluate(expression + ".click('entry')")).toBe('')
+      expect(await page.evaluate('document.body.dataset.clicked')).toBeUndefined()
+    }
+    await page.evaluate(
+      (method) =>
+        localStorage.setItem('status', JSON.stringify({ [method + '_client_id']: 'fixture' })),
+      method,
+    )
+    expect(await page.evaluate(expression + ".click('entry')")).toBe('clicked')
+    expect(await page.evaluate('document.body.dataset.clicked')).toBe('yes')
+  })
+
   test(`OAuth 入口按 ${method} 选择，忽略页脚与隐藏、禁用按钮`, async ({ page }) => {
     await load(
       page,

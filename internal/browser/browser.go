@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"auto-check-in/internal/domain"
@@ -105,6 +106,7 @@ type Session struct {
 	creds          domain.Credentials
 	browserToken   bool
 	loginResponses chan port.Response
+	confirmedUser  atomic.Pointer[string]
 }
 
 func (f *Factory) Open(ctx context.Context, site domain.Site, c domain.Credentials) (port.Session, error) {
@@ -135,7 +137,11 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 			return nil, f.lifetime.Err()
 		}
 	}
-	s, err := f.allocateSession(ctx, site, c, interactive && f.config.InteractiveVisible)
+	// AgentRouter's identity providers may challenge headless sessions even with
+	// valid saved cookies. On desktop use the same ordinary isolated window as
+	// manual login, then close it as soon as the run finishes.
+	visible := f.config.InteractiveVisible && (interactive || site.Adapter == "agentrouter" && (c.Method == "github" || c.Method == "linuxdo"))
+	s, err := f.allocateSession(ctx, site, c, visible)
 	if err != nil {
 		<-f.slots
 		return nil, err
@@ -147,14 +153,14 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 		s.Close()
 		return nil, f.startupError(ctx, "账号浏览器上下文初始化", err)
 	}
-	s.trackTabs()
+	if err = s.trackTabs(); err != nil {
+		s.Close()
+		return nil, err
+	}
 	s.listenLoginResponses(s.ctx)
 	openCtx, openCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer openCancel()
-	err = s.run(openCtx, cdpActionFunc(func(ctx context.Context) error {
-		_, e := cdp.Call(ctx, chromedp.FromContext(ctx).Target, network.Enable, network.EnableParams{})
-		return e
-	}))
+	err = s.run(openCtx, enableNetwork)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -199,7 +205,7 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 	if interactive && (c.Method == "github" || c.Method == "linuxdo") {
 		// Do not hold up the visible window while a SPA renders its login form.
 		// Cancellation/close also stops this bounded, one-shot provider selection.
-		go func() { _ = s.selectOAuthEntry(s.ctx, c.Method) }()
+		go s.assistOAuth(s.ctx, c.Method)
 	}
 	return s, nil
 }
@@ -333,6 +339,11 @@ func (s *Session) listenLoginResponses(tab context.Context) {
 					}))
 					if err == nil {
 						if len(body) < 1<<20 {
+							id := ""
+							if status >= 200 && status < 300 {
+								id = transport.UserID(body)
+							}
+							s.confirmedUser.Store(&id)
 							select {
 							case s.loginResponses <- port.Response{Status: status, Body: body}:
 							default:

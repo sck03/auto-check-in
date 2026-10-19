@@ -57,7 +57,7 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 	}
 	working := c
 	if adapter.RequiresFreshLogin {
-		working = freshLoginCredentials(site, c)
+		working = FreshLoginCredentials(site, c)
 	}
 	stage = "open_session"
 	session, err := r.Factory.Open(ctx, site, working)

@@ -8,7 +8,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
-	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 )
@@ -62,7 +62,7 @@ func (s *Session) runSite(ctx context.Context, actions ...cdpActionFunc) error {
 
 // Every tracked tab belongs to this account's browser context. In particular,
 // popups from another account sharing the background process are never attached.
-func (s *Session) trackTabs() {
+func (s *Session) trackTabs() error {
 	id := chromedp.FromContext(s.ctx).Target.TargetID
 	s.tabs = map[target.ID]*sessionTab{id: {ctx: s.ctx, ready: true}}
 	s.tabOrder = []target.ID{id}
@@ -71,6 +71,18 @@ func (s *Session) trackTabs() {
 	changed := chromedp.BrowserEvents(s.ctx, target.TargetInfoChanged)
 	destroyed := chromedp.BrowserEvents(s.ctx, target.TargetDestroyed)
 	_, _ = cdp.Call(s.ctx, chromedp.FromContext(s.ctx).Browser, target.SetDiscoverTargets, target.SetDiscoverTargetsParams{Discover: true})
+	if s.nativeWindow && s.site.Adapter == "agentrouter" {
+		// A previously authorized OAuth popup can fetch its callback before we
+		// attach. Pause new pages until their login response listener is ready.
+		yes := true
+		_, err := cdp.Call(s.ctx, chromedp.FromContext(s.ctx).Browser, target.SetAutoAttach, target.SetAutoAttachParams{
+			AutoAttach: true, WaitForDebuggerOnStart: true, Flatten: &yes,
+			Filter: target.Filter{{Type: "page"}, {Exclude: true}},
+		})
+		if err != nil {
+			return err
+		}
+	}
 	go func() {
 		for event, err := range created {
 			if err != nil {
@@ -95,6 +107,7 @@ func (s *Session) trackTabs() {
 			s.removeTab(event.TargetID)
 		}
 	}()
+	return nil
 }
 
 func (s *Session) attachTab(info *target.Info) {
@@ -112,9 +125,16 @@ func (s *Session) attachTab(info *target.Info) {
 	s.tabMu.Unlock()
 	timer := time.AfterFunc(8*time.Second, cancel)
 	defer timer.Stop()
+	resumed := !s.nativeWindow
+	defer func() {
+		if !resumed && chromedp.FromContext(ctx).Target != nil {
+			// Release even when initialization fails; never leave a live page frozen.
+			_, _ = cdp.Call(s.ctx, chromedp.FromContext(ctx).Target, runtime.RunIfWaitingForDebugger, cdp.Empty{})
+		}
+	}()
 	err := chromedp.Do(ctx)
 	if err == nil {
-		_, err = cdp.Call(ctx, chromedp.FromContext(ctx).Target, network.Enable, network.EnableParams{})
+		err = enableNetwork(ctx)
 	}
 	if err == nil && s.creds.UserAgent != "" && !s.nativeWindow {
 		_, err = cdp.Call(ctx, chromedp.FromContext(ctx).Target, emulation.SetUserAgentOverride, emulation.SetUserAgentOverrideParams{UserAgent: s.creds.UserAgent})
@@ -124,6 +144,13 @@ func (s *Session) attachTab(info *target.Info) {
 		return
 	}
 	s.listenLoginResponses(ctx)
+	if s.nativeWindow {
+		if _, err = cdp.Call(ctx, chromedp.FromContext(ctx).Target, runtime.RunIfWaitingForDebugger, cdp.Empty{}); err != nil {
+			s.removeTab(info.TargetID)
+			return
+		}
+		resumed = true
+	}
 	s.tabMu.Lock()
 	if s.tabs[info.TargetID] == tab {
 		tab.ready = true

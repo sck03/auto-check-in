@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
@@ -12,6 +13,16 @@ import (
 // Small helpers keep operation-scoped cancellation and JSON decoding inside
 // this driver. The application layer never depends on the CDP library API.
 type cdpActionFunc func(context.Context) error
+
+func enableNetwork(ctx context.Context) error {
+	// Keep small login responses across renderer swaps on OAuth redirects.
+	// Bound the buffers so unrelated large assets cannot grow them indefinitely.
+	total, resource, durable := int64(2<<20), int64(1<<20), true
+	_, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, network.Enable, network.EnableParams{
+		MaxTotalBufferSize: &total, MaxResourceBufferSize: &resource, EnableDurableMessages: &durable,
+	})
+	return err
+}
 
 func native(action chromedp.Action[chromedp.Void]) cdpActionFunc {
 	return func(ctx context.Context) error { return chromedp.Do(ctx, action) }

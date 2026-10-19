@@ -54,10 +54,10 @@ func loginFailure(resp port.Response) *domain.Result {
 	return nil
 }
 
-// A server logout can revoke a cookie the user also uses in their normal
-// browser. Start fresh locally, retaining only WAF cookies and identity-provider
-// sessions; never invalidate the imported session at the server.
-func freshLoginCredentials(site domain.Site, c domain.Credentials) domain.Credentials {
+// FreshLoginCredentials starts fresh locally, retaining only WAF cookies and
+// identity-provider sessions. A server logout could revoke an imported cookie
+// the user also uses in their normal browser.
+func FreshLoginCredentials(site domain.Site, c domain.Credentials) domain.Credentials {
 	base, _ := url.Parse(site.BaseURL)
 	keep := func(cookie domain.Cookie) bool {
 		d := strings.TrimPrefix(strings.ToLower(cookie.Domain), ".")

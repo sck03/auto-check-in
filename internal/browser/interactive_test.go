@@ -122,6 +122,9 @@ func testInteractiveOAuth(t *testing.T, visible bool, method string, popup bool)
 	if err := session.Interact(ctx, port.Interaction{Type: "focus"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := driver.pollPage(ctx, "document.querySelector('#user')?.getClientRects().length > 0", nil, 3*time.Second); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.Interact(ctx, port.Interaction{Type: "click", X: 80, Y: 20}); err != nil {
 		t.Fatal(err)
 	}

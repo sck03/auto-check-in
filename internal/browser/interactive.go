@@ -6,11 +6,38 @@ import (
 
 	"auto-check-in/internal/domain"
 	"auto-check-in/internal/port"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 )
 
 func (s *Session) NativeWindow() bool    { return s.nativeWindow }
 func (s *Session) Done() <-chan struct{} { return s.ctx.Done() }
+
+// An observed successful login response is authoritative even when the site's
+// WAF intercepts a later user-info request. Never infer success from old storage:
+// require this session's response, matching current page identity and a cookie.
+func (s *Session) ConfirmedLogin(ctx context.Context) bool {
+	id := s.confirmedUser.Load()
+	if id == nil || *id == "" {
+		return false
+	}
+	var matches bool
+	expr := "(()=>{if(location.origin!==" + jsonJS(s.site.BaseURL) + ")return false;try{return String(JSON.parse(localStorage.getItem('user')||'{}').id)===" + jsonJS(*id) + "}catch{return false}})()"
+	if err := s.runSite(ctx, cdpEvaluate(expr, &matches)); err != nil || !matches {
+		return false
+	}
+	cookies, err := cdp.Call(ctx, chromedp.FromContext(s.ctx).Target, network.GetCookies, network.GetCookiesParams{URLs: []string{s.site.BaseURL}})
+	if err != nil {
+		return false
+	}
+	for _, cookie := range cookies.Cookies {
+		if cookie.Name == "session" && cookie.Value != "" {
+			return true
+		}
+	}
+	return false
+}
 
 func (f *Factory) allocateSession(ctx context.Context, site domain.Site, c domain.Credentials, visible bool) (*Session, error) {
 	var browserCtx context.Context
