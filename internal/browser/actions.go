@@ -31,7 +31,7 @@ func (s *Session) Login(ctx context.Context) (port.Response, error) {
 		}
 	}
 drained:
-	args := map[string]any{"selectors": s.site.Selectors, "username": s.creds.Username, "password": s.creds.Password, "method": s.creds.Method}
+	args := map[string]any{"selectors": s.site.Selectors, "username": s.creds.Username, "password": s.creds.Password}
 	var clicked bool
 	if s.creds.Method == "password" {
 		// A normal email-login entry may precede the actual form.
@@ -44,8 +44,10 @@ drained:
 			return port.Response{}, s.loginDiagnostic(ctx, "无法提交登录表单：输入框或按钮不存在、按钮不可用；请检查选择器或在浏览器中完成必填项")
 		}
 	} else if s.creds.Method == "github" || s.creds.Method == "linuxdo" {
-		expr := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "const selector=a.method==='github'?a.selectors.github:a.selectors.linuxdo;let button=find(selector);const pattern=a.method==='github'?/GitHub/i:/Linux.?DO/i;if(!button)button=[...document.querySelectorAll('button,a')].find(e=>visible(e)&&pattern.test(e.textContent));if(!button||button.disabled)return false;button.click();return true})()"
-		if err := s.run(ctx, cdpPoll(expr, nil, chromedp.WithPollingTimeout(20*time.Second))); err != nil {
+		if err := s.selectOAuthEntry(ctx, s.creds.Method); err != nil {
+			if err == port.ErrUncertain {
+				return port.Response{}, err
+			}
 			return port.Response{}, s.loginDiagnostic(ctx, "未找到可用的 "+s.creds.Method+" 授权入口，请检查站点配置")
 		}
 	} else {
@@ -55,6 +57,7 @@ drained:
 	defer timer.Stop()
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
+	consentAttempted := false
 	for {
 		select {
 		case response := <-s.loginResponses:
@@ -69,9 +72,24 @@ drained:
 		case <-timer.C:
 			return port.Response{}, s.loginDiagnostic(ctx, "提交登录后 45 秒未收到登录接口响应；可能停留在授权页、验证页，或登录接口路径不匹配")
 		case <-ticker.C:
+			op, cancel := context.WithTimeout(ctx, 3*time.Second)
+			err := s.continueOAuth(op, &consentAttempted)
+			cancel()
+			if err != nil {
+				return port.Response{}, err
+			}
+			// Do not repeatedly fetch user info or collect diagnostics while the
+			// only page is still at an external identity provider.
+			var atSite bool
+			op, cancel = context.WithTimeout(ctx, 3*time.Second)
+			err = s.runSite(op, cdpEvaluate("location.origin==="+jsonJS(s.site.BaseURL), &atSite))
+			cancel()
+			if err != nil || !atSite {
+				continue
+			}
 			// A fast redirect can destroy the login response body before CDP reads
 			// it. Verify the resulting session without ever resubmitting the login.
-			op, cancel := context.WithTimeout(ctx, 3*time.Second)
+			op, cancel = context.WithTimeout(ctx, 3*time.Second)
 			response, err := s.request(op, "GET", s.site.UserInfoPath, nil)
 			cancel()
 			if err == nil && response.Status >= 200 && response.Status < 300 && transport.UserID(response.Body) != "" {

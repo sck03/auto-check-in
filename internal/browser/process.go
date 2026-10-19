@@ -55,7 +55,7 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 	process := &browserProcess{ctx: root, close: func() {
 		cancel()
 		allocCancel()
-		_ = os.RemoveAll(profile)
+		_ = RemoveProfile(profile)
 	}}
 	stopRequest := context.AfterFunc(ctx, cancel)
 	stopShutdown := context.AfterFunc(f.lifetime, cancel)
@@ -74,8 +74,23 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 	return process, nil
 }
 
-// Human login and the desktop shell use normal browser defaults. In particular,
-// do not disable browser security, background throttling or enable test mode in
+// RemoveProfile is called only after the owning browser/allocator has stopped.
+// Chromium child processes can retain Windows file handles briefly after the
+// main process exits. Bound retries to teardown; never add idle maintenance.
+func RemoveProfile(profile string) error {
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err := os.RemoveAll(profile)
+		if err == nil || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Human login starts with normal browser defaults. The local desktop shell may
+// append resource limits that are not applied to third-party login windows.
+// Do not disable browser security, background throttling or enable test mode in
 // windows the user operates. Every caller still supplies its own user-data-dir.
 func LaunchOptions(visible bool) ([]chromedp.ExecAllocatorOption, error) {
 	if visible {

@@ -196,6 +196,11 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 			return nil, err
 		}
 	}
+	if interactive && (c.Method == "github" || c.Method == "linuxdo") {
+		// Do not hold up the visible window while a SPA renders its login form.
+		// Cancellation/close also stops this bounded, one-shot provider selection.
+		go func() { _ = s.selectOAuthEntry(s.ctx, c.Method) }()
+	}
 	return s, nil
 }
 

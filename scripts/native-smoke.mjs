@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { createServer as createHTTPServer } from 'node:http'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -17,6 +17,10 @@ const port = probe.address().port
 await new Promise(resolve => probe.close(resolve))
 await mkdir(path.join(root, 'artifacts'), { recursive: true })
 const data = await mkdtemp(path.join(root, 'artifacts', 'native-'))
+const profile = path.join(data, 'desktop-browser')
+const staleCache = path.join(profile, 'component_crx_cache', 'stale-test-component')
+await mkdir(path.dirname(staleCache), { recursive: true })
+await writeFile(staleCache, Buffer.alloc(1024 * 1024))
 const token = 'native-smoke-test-token-not-for-production'
 const fixture = createHTTPServer((_req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
@@ -48,11 +52,24 @@ async function api(route, method = 'GET', body) {
 async function connect() {
   return until(async () => chromium.connectOverCDP('http://127.0.0.1:' + port, { timeout: 800 }), 'Desktop CDP connection failed')
 }
+async function profileBytes(directory) {
+  let bytes = 0
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const target = path.join(directory, entry.name)
+    if (entry.isDirectory()) bytes += await profileBytes(target)
+    else if (entry.isFile()) bytes += (await stat(target)).size
+  }
+  return bytes
+}
+async function profileRemoved() {
+  try { await stat(profile); return false } catch (error) { if (error.code === 'ENOENT') return true; throw error }
+}
 try {
   baseURL = (await until(async () => JSON.parse(await readFile(path.join(data, 'endpoint.json'), 'utf8')), 'HTTP service did not start')).url
   browser = await connect()
   let page = browser.contexts()[0].pages()[0]
   await page.getByRole('heading', { name: '我的账号' }).waitFor({ timeout: 15000 })
+  await assert.rejects(stat(staleCache), { code: 'ENOENT' }, 'old browser components should be reclaimed before launch')
   const metadata = await api('/meta')
   const expectedVersion = process.env.SMOKE_EXPECT_VERSION || JSON.parse(await readFile(path.join(root, 'web/package.json'), 'utf8')).version
   assert.equal(metadata.version, expectedVersion, 'smoke test must use the intended build')
@@ -101,8 +118,11 @@ try {
   assert.equal(loginDiagnostics.browser_pool.native_windows, 0, 'cancel should close the login window')
   await api('/accounts/' + loginAccount.id, 'DELETE')
   await api('/sites/' + loginSite.id, 'DELETE')
+  const desktopProfileBytes = await profileBytes(profile)
   await api('/desktop/action', 'POST', { action: 'minimize' })
   await until(async () => !(await api('/desktop')).window_open, 'Minimized window was not released into tray')
+  await until(profileRemoved, 'Desktop browser profile was not removed after minimizing')
+  assert.ok((await stat(path.join(data, 'checkin.db'))).size > 0, 'profile cleanup must preserve application data')
   assert.equal((await fetch(baseURL + '/healthz')).status, 200)
   const trayDiagnostics = await api('/diagnostics')
   await api('/desktop/action', 'POST', { action: 'show' })
@@ -111,6 +131,7 @@ try {
   await page.getByRole('heading', { name: '我的账号' }).waitFor()
   await page.close()
   await until(async () => !(await api('/desktop')).window_open, 'Closing the display did not leave the tray process alive')
+  await until(profileRemoved, 'Desktop browser profile was not removed after closing')
   const prior = (await api('/settings')).scheduler_enabled
   await api('/desktop/action', 'POST', { action: 'pause' })
   await until(async () => (await api('/settings')).scheduler_enabled !== prior, 'Tray pause action did not update scheduler')
@@ -120,6 +141,7 @@ try {
     tray: { minimize: true, restore: true, closeKeepsRunning: true, menus: status.menu },
     startupSwitch: 'passed with isolated test backend; real registry adapter separately unit-tested',
     nativeLoginWindow: { opened: true, focus: true, screenshotPolling: false, cancelled: true, resourcesReleased: true },
+    desktopProfile: { bytesWhileOpen: desktopProfileBytes, staleComponentsRemoved: true, removedAfterClose: true },
     trayDiagnostics, testedAt: new Date().toISOString(),
   }, null, 2))
   await api('/desktop/action', 'POST', { action: 'quit' })

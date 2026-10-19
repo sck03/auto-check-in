@@ -28,9 +28,22 @@ func Run(ctx context.Context, baseURL, token, dataDir, browserPath string, ready
 	if err != nil {
 		return err
 	}
-	opts = append(opts, chromedp.ExecPath(browserPath), chromedp.UserDataDir(filepath.Join(dataDir, "desktop-browser")),
+	profile := filepath.Join(dataDir, "desktop-browser")
+	// The shell stores no account sessions: all durable state lives in the
+	// service. Reclaim old component downloads, including after an abnormal exit.
+	if err := browser.RemoveProfile(profile); err != nil {
+		return fmt.Errorf("清理管理窗口临时目录：%w", err)
+	}
+	if err := os.MkdirAll(profile, 0700); err != nil {
+		return err
+	}
+	defer browser.RemoveProfile(profile) // runs after the browser and allocator exit
+	opts = append(opts, chromedp.ExecPath(browserPath), chromedp.UserDataDir(profile),
 		chromedp.Flag("headless", false), chromedp.Flag("app", target), chromedp.WindowSize(1180, 840),
-		chromedp.Flag("no-first-run", true), chromedp.Flag("no-default-browser-check", true))
+		chromedp.Flag("disable-component-update", true), chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-sync", true), chromedp.Flag("disable-extensions", true),
+		chromedp.Flag("disable-default-apps", true), chromedp.Flag("metrics-recording-only", true),
+		chromedp.Flag("disk-cache-size", strconv.Itoa(8<<20)), chromedp.Flag("media-cache-size", strconv.Itoa(1<<20)))
 	// Optional local test hook. Production uses chromedp's ephemeral loopback
 	// debugger endpoint, which is never exposed through the application API.
 	if raw := os.Getenv("CHECKIN_DESKTOP_TEST_PORT"); raw != "" {

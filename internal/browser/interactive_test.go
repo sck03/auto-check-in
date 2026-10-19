@@ -70,7 +70,7 @@ func testInteractiveOAuth(t *testing.T, visible bool, method string, popup bool)
 		if popup {
 			destination = "_blank"
 		}
-		fmt.Fprintf(w, "<title>Original login</title><button style='position:absolute;left:20px;top:20px;width:200px;height:50px' onclick=\"window.open('%s?return='+encodeURIComponent(location.origin+'/callback'),'%s')\">%s</button>", oauth.URL, destination, method)
+		fmt.Fprintf(w, "<title>Original login</title><button disabled onclick=\"window.open('%s?return='+encodeURIComponent(location.origin+'/callback'),'%s')\">使用 %s 继续</button><script>setTimeout(()=>document.querySelector('button').disabled=false,300)</script>", oauth.URL, destination, method)
 	}))
 	defer siteServer.Close()
 	factory := New(Config{Executable: os.Getenv("CHECKIN_BROWSER_PATH"), TempDir: t.TempDir(), NoSandbox: os.Getenv("CHECKIN_BROWSER_NO_SANDBOX") == "true", InteractiveVisible: visible})
@@ -87,7 +87,7 @@ func testInteractiveOAuth(t *testing.T, visible bool, method string, popup bool)
 	if session.NativeWindow() != visible {
 		t.Fatal("interactive presentation does not match the selected host")
 	}
-	other, err := factory.OpenInteractive(ctx, site, domain.Credentials{Method: method})
+	other, err := factory.OpenInteractive(ctx, site, domain.Credentials{Method: "cookie"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +99,7 @@ func testInteractiveOAuth(t *testing.T, visible bool, method string, popup bool)
 			t.Fatalf("human login window still uses automation mode: webdriver=%v err=%v", webdriver, err)
 		}
 	}
-	if err := driver.run(ctx, cdpPoll("!!document.querySelector('button')", nil)); err != nil {
-		t.Fatal(err)
-	}
 	if err := session.Interact(ctx, port.Interaction{Type: "focus"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.Interact(ctx, port.Interaction{Type: "click", X: 80, Y: 40}); err != nil {
 		t.Fatal(err)
 	}
 	title := ""
@@ -122,6 +116,14 @@ func testInteractiveOAuth(t *testing.T, visible bool, method string, popup bool)
 	var otherTitle string
 	if err := other.(*Session).run(ctx, cdpEvaluate("document.title", &otherTitle)); err != nil || otherTitle != "Original login" {
 		t.Fatalf("another account was affected by the popup: %q, %v", otherTitle, err)
+	}
+	// Opening the second native window can take focus after the first window
+	// has already selected its provider. Model the user's click into the field.
+	if err := session.Interact(ctx, port.Interaction{Type: "focus"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Interact(ctx, port.Interaction{Type: "click", X: 80, Y: 20}); err != nil {
+		t.Fatal(err)
 	}
 	if err := session.Interact(ctx, port.Interaction{Type: "text", Text: "example-user"}); err != nil {
 		t.Fatal(err)
