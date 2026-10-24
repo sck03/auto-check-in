@@ -31,7 +31,7 @@
 | POST | `/backup/restore` | `{"password":"...","archive":"Base64 文件内容"}` |
 | GET / PUT | `/desktop` | Windows 偏好、托盘状态、菜单描述 |
 | POST | `/desktop/action` | show / hide / minimize / quit / run_all / pause / open_data |
-| GET | `/diagnostics` | Go 堆、goroutine 与浏览器池计数；不包含凭据 |
+| GET | `/diagnostics` | Go 堆、goroutine、浏览器池、profile 回收计数及结果写回状态；不包含凭据 |
 
 ## 站点模板
 
@@ -40,6 +40,8 @@
 `template_id` 必填并保存所选模板，`adapter` 决定签到方式，`transport` 决定 HTTP 或浏览器执行。通用模板允许 `adapter=newapi`（接口签到，含 WONG）和 `adapter=browser`（网页按钮签到，必须 `transport=browser`）；专用模板只允许对应适配器。网页签到的 `selectors.checkin` 留空时自动识别常见按钮；`selectors.success` / `selectors.already` 均留空时识别明确签到提示，填写其中任一项后仅使用配置的结果标识。多个按钮候选或无效 CSS 返回需要处理；点击后缺少结果返回 `unverified`。不匹配、空模板、已移除的 `wong` / `browser` 模板均拒绝保存。不再接受无用的 `logout_path` 字段。
 
 数据库版本为 5，仅支持新建或重开同版本数据库，不进行旧版本迁移。站点名称、接口路径和模板选择随新版备份保存。
+
+站点地址保存时去掉 HTTP 80 / HTTPS 443 默认端口。重开 v5 数据时会同步归一化等价地址，读取凭据时兼容原 localStorage origin 键；不会更换实际目标站点。
 
 有账号引用时不能更换地址、适配器或平台模板；存在 OAuth 账号时不能切换到 HTTP。账号保存会在事务中再次检查当前站点配置，避免并发修改导致 OAuth 账号失去浏览器执行方式。
 
@@ -70,6 +72,10 @@
 界面的“清除旧会话”同时清空 Cookie、Token 和旧用户 ID，保留用户名与密码供重新登录；同次填写的新凭据优先保留。仅有 localStorage 的页面登录也计为已保存会话。
 
 登录会话描述包含 `native_window`。为 true 时，客户端显示独立窗口的操作说明，不轮询截图；`focus` 用于显示当前登录窗口。取消会先中断正在等待的浏览器操作；关闭独立浏览器后，服务会结束会话并释放容量。
+
+已绑定 `api_user` 的账号在运行和保存登录期间不能改变用户身份；身份不符返回错误并保留原凭据。更换身份需明确编辑账号、清除旧会话。保存登录可在两秒内对 401 做只读复核，总验证超时仍为十二秒，不会重复提交登录。
+
+`GET /diagnostics` 增加 `engine.pending_results` / `engine.save_failures`，分别为待恢复的本地结束记录数和本次进程结果写入失败次数。`browser_pool.profile_cleanup` 包含启动回收的 `removed` / `failed` 计数。结果保存故障后的恢复只写本地记录；`persistence_error` 表示需核对站点的未知状态。
 
 ## 执行与人工重试
 

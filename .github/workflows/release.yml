@@ -5,9 +5,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag, for example v1.0.2'
+        description: 'Existing version tag matching internal/buildinfo/VERSION'
         required: true
-        default: v1.0.2
 permissions:
   contents: read
 concurrency:
@@ -20,7 +19,11 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       image: ${{ steps.version.outputs.image }}
+      commit: ${{ steps.version.outputs.commit }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - id: version
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
@@ -28,14 +31,21 @@ jobs:
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
             echo 'A semantic version tag is required'; exit 1
           fi
+          source_version="$(tr -d '\r\n' < internal/buildinfo/VERSION)"
+          if [[ "${RELEASE_TAG#v}" != "$source_version" ]]; then
+            echo 'Release tag must match internal/buildinfo/VERSION'; exit 1
+          fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   windows:
     needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.tag }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.2'
@@ -70,6 +80,8 @@ jobs:
       SMOKE_CONTAINER: checkin-release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.version.outputs.tag }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.18.0'
@@ -161,7 +173,7 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          target_commitish: ${{ github.sha }}
+          target_commitish: ${{ needs.version.outputs.commit }}
           name: Auto Check-In ${{ needs.version.outputs.version }}
           prerelease: ${{ contains(needs.version.outputs.version, '-') }}
           generate_release_notes: true
@@ -175,5 +187,5 @@ jobs:
             Docker 镜像支持 linux/amd64 与 linux/arm64：
             `docker pull ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}`
             同时附带 amd64 Docker 离线镜像压缩包，可使用 `docker load` 导入。
-            默认首次签到窗口为北京时间 08:00–09:00，明确临时失败有限补签至 09:30。
+            默认首次签到窗口为北京时间 08:00–09:00，明确临时失败有限补签至 09:00。
             成品未进行代码签名。详细配置和真实账号验收说明见仓库文档。

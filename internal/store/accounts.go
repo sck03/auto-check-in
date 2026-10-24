@@ -73,6 +73,17 @@ func (s *Store) credentials(ctx context.Context, q queryer, id string) (domain.C
 		return c, err
 	}
 	err = json.Unmarshal(plain, &c)
+	if err == nil && len(c.Storage) > 0 {
+		storage := make(map[string]map[string]string, len(c.Storage))
+		for origin, values := range c.Storage {
+			key := domain.CanonicalOrigin(origin)
+			// Prefer the already canonical entry if both spellings were stored.
+			if storage[key] == nil || key == origin {
+				storage[key] = values
+			}
+		}
+		c.Storage = storage
+	}
 	return c, err
 }
 func identity(c domain.Credentials) string {
@@ -88,6 +99,13 @@ func (s *Store) sealCredentials(c domain.Credentials, id string) ([]byte, error)
 	return s.vault.Seal([]byte(jsonText(c)), "account:"+id)
 }
 func (s *Store) updateCredentials(ctx context.Context, tx *sql.Tx, id string, c domain.Credentials, now time.Time) error {
+	old, err := getAccount(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if old.Auth.APIUser != "" && c.APIUser != old.Auth.APIUser {
+		return fmt.Errorf("%w：运行或登录期间不能更换已绑定的用户身份", domain.ErrConflict)
+	}
 	sealed, err := s.sealCredentials(c, id)
 	if err != nil {
 		return err

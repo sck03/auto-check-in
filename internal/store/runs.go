@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"auto-check-in/internal/domain"
@@ -119,19 +120,27 @@ func scheduleNext(ctx context.Context, tx *sql.Tx, a domain.Account, now time.Ti
 	return err
 }
 
-func (s *Store) Claim(ctx context.Context, allowScheduled bool, now time.Time) (*domain.Run, error) {
+func (s *Store) Claim(ctx context.Context, allowScheduled bool, now time.Time, excludedOrigins ...string) (*domain.Run, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	eligible := ""
+	args := []any{allowScheduled}
+	if len(excludedOrigins) > 0 {
+		eligible = " AND site_id IN (SELECT id FROM sites WHERE json_extract(config,'$.base_url') NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(excludedOrigins)), ",") + "))"
+		for _, origin := range excludedOrigins {
+			args = append(args, origin)
+		}
+	}
 	for {
 		// Start from the small queue index, rather than joining each account's
 		// entire history before filtering for queued work.
 		pending, err := scanRun(tx.QueryRowContext(ctx, "SELECT "+runColumns+` FROM runs
 WHERE status='queued' AND (? OR trigger IN ('manual','manual_retry'))
-AND EXISTS (SELECT 1 FROM accounts WHERE id=runs.account_id AND enabled=1)
-ORDER BY created_at,id LIMIT 1`, allowScheduled))
+AND EXISTS (SELECT 1 FROM accounts WHERE id=runs.account_id AND enabled=1`+eligible+`)
+ORDER BY created_at,id LIMIT 1`, args...))
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, tx.Commit()
 		}
@@ -188,7 +197,15 @@ func (s *Store) Finish(ctx context.Context, id string, result domain.Result, c *
 	if err != nil {
 		return err
 	}
+	if r.Action != "checkin" {
+		return domain.ErrConflict
+	}
 	if r.Status != domain.Running {
+		// A commit can succeed even if its caller loses the completion response.
+		// Retrying a terminal write must not overwrite it or remain pending forever.
+		if r.FinishedAt != nil {
+			return nil
+		}
 		return domain.ErrConflict
 	}
 	a, err := getAccount(ctx, tx, r.AccountID)
@@ -309,7 +326,13 @@ func (s *Store) FinishLogin(ctx context.Context, id string, c *domain.Credential
 	if err != nil {
 		return err
 	}
+	if r.Action != "login" {
+		return domain.ErrConflict
+	}
 	if r.Status != domain.WaitingUser {
+		if r.FinishedAt != nil {
+			return nil
+		}
 		return domain.ErrConflict
 	}
 	if c != nil {
@@ -402,6 +425,16 @@ func (s *Store) Recover(ctx context.Context, now time.Time) error {
 	return tx.Commit()
 }
 func (s *Store) Prune(ctx context.Context, cutoff time.Time) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM runs WHERE finished_at>0 AND finished_at<?", millis(cutoff))
+	result, err := s.db.ExecContext(ctx, "DELETE FROM runs WHERE finished_at>0 AND finished_at<?", millis(cutoff))
+	if err != nil {
+		return err
+	}
+	removed, err := result.RowsAffected()
+	if err != nil || removed == 0 {
+		return err
+	}
+	// Reclaim the WAL after actual retention work. Main-database free pages are
+	// reused by SQLite; a full VACUUM would unnecessarily block normal tasks.
+	_, err = s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 	return err
 }

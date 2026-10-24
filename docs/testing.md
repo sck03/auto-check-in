@@ -2,6 +2,12 @@
 
 ## 自动化范围
 
+- 2026-10-24 稳定性补充：错账号响应连续两次均不更新会话或发送签到，重新登录也复核绑定身份；存储层拒绝身份漂移。
+- 结果写回：首个上下文超时后使用独立 fallback 截止时间，两次失败后无需重启恢复本地结束记录，空恢复队列经过 24 小时不轮询；终态幂等且不覆盖成功结果。
+- 调度公平性：三个同站点任务排在另一站点前，前一个仍运行时另一站点即可开始；同 origin 的不同站点配置都遵守排除规则。
+- URL 与资源：HTTP 80、HTTPS 443、IPv6 默认端口归一化；已有 v5 数据与 localStorage 键兼容；异常 profile 只清理已知名称的目录，保护普通文件、未知目录及符号链接目标。
+- 前端及登录：桌面设置的旧 GET 不覆盖新 PUT、隐藏和卸载后停止读取；输入失败中断队列且禁止保存，核对后继续不重放；延迟 600 毫秒的站点登录可立即保存，401 仅有限只读复核，身份不符不重试。
+
 - 领域规则：北京时间窗口、按账号独立随机、重启稳定性、成功后的日期边界、补签截止和非法配置。
 - 站点协议：严格 JSON、成功/已签到、AnyRouter 只访问、AgentRouter 新登录与不注销导入会话、New API 状态复核、薄荷每日抽奖与令牌失效、HTML 假成功、401、429、余额与奖励分离。
 - 存储：AEAD 加密、账号关联验证、版本冲突、并发入队唯一性、有限重试和重启预算、异常退出、备份事务回滚。
@@ -51,7 +57,7 @@ node scripts/native-smoke.mjs
 go test ./internal/store -run '^$' -bench BenchmarkAccountList -benchmem
 ```
 
-端到端测试需要先生成 `dist/checkin-server.exe`（Linux 为 `dist/checkin-server`）。Windows 程序测试还需要 `dist/AutoCheckIn.exe`。测试目录在 `artifacts/`，与实际用户数据目录分开。
+端到端测试需要先生成 `dist/checkin-server.exe`（Linux 为 `dist/checkin-server`）。Windows 程序测试还需要 `dist/AutoCheckIn.exe`。测试目录在 `artifacts/`，与实际用户数据目录分开；成功后删除测试实例目录，失败时保留日志与现场，界面截图和 native-smoke 汇总继续保留。
 
 ## 证据
 

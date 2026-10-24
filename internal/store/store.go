@@ -50,7 +50,10 @@ func Open(path string, vault *security.Vault) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	s := &Store{db: db, vault: vault}
-	if err = s.initialize(); err != nil {
+	if err = s.initialize(); err == nil {
+		err = s.normalizeOrigins()
+	}
+	if err != nil {
 		_ = db.Close()
 		return nil, err
 	}

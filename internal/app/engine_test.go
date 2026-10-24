@@ -141,7 +141,7 @@ func TestAutomaticExecutionDeadlineStopsAtWindowEnd(t *testing.T) {
 			executor := &trackingExecutor{origins: map[string]int{}}
 			settings := domain.DefaultSettings()
 			settings.TaskTimeoutSeconds = 48 * 60 * 60
-			NewEngine(repo, executor).execute(ctx, *run, settings)
+			NewEngine(repo, executor).execute(ctx, *run, settings, nil)
 			_, end := schedule.Bounds(now)
 			if trigger == "scheduled_retry" {
 				_, end = schedule.RetryBounds(now)

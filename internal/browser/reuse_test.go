@@ -52,7 +52,7 @@ func TestSavedOAuthSessionReuseAndExpiry(t *testing.T) {
 				defer factory.Close()
 				template, _ := domain.TemplateByID(adapter)
 				site := template.Site
-				site.BaseURL = server.URL
+				site.BaseURL, site.Transport = server.URL, "browser"
 				runner := provider.Runner{Factory: factory, Now: func() time.Time { return time.Date(2026, 10, 19, 1, 0, 0, 0, time.UTC) }}
 				creds := domain.Credentials{Method: "linuxdo", APIUser: "7", CookieHeader: "session=saved", Storage: map[string]map[string]string{site.BaseURL: {"user": `{"id":7}`}}}
 				ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

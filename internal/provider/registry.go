@@ -54,7 +54,7 @@ func visitCheckIn(ctx context.Context, session port.Session, site domain.Site, _
 	if f := HTTPFailure(resp); f != nil {
 		return *f, nil
 	}
-	if !authenticated(resp, "") {
+	if !Authenticated(resp, "") {
 		return domain.Result{Status: domain.NeedsAttention, Message: "访问页面后未确认登录身份：" + responseMessage(resp, "请重新登录"), Evidence: "session_invalid", Advice: "完成浏览器登录并保存会话后重试。"}, nil
 	}
 	return domain.Result{Status: domain.Succeeded, Message: "已访问登录页面并确认用户身份，按 AnyRouter 08:00 后访问规则完成签到", Evidence: "authenticated_visit", BalanceAfter: Balance(resp)}, nil

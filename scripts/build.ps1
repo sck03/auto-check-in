@@ -1,11 +1,14 @@
 param(
     [string]$Go = '',
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$')]
-    [string]$Version = '1.0.3',
+    [string]$Version = '',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$sourceVersion = [IO.File]::ReadAllText((Join-Path $projectRoot 'internal/buildinfo/VERSION')).Trim()
+if (-not $Version) { $Version = $sourceVersion }
+if ($Version -ne $sourceVersion) { throw 'Update internal/buildinfo/VERSION before building a new release version.' }
 if (-not $Go) {
     $goCommand = Get-Command go -ErrorAction SilentlyContinue
     if ($goCommand) { $Go = $goCommand.Source }

@@ -49,6 +49,7 @@ type Factory struct {
 	idle      *time.Timer
 	closed    bool
 	visible   map[*Session]struct{}
+	cleanup   ProfileCleanup
 }
 
 func New(config Config) *Factory {

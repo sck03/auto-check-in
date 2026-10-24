@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { createServer as createHTTPServer } from 'node:http'
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -32,7 +32,7 @@ const app = spawn(process.env.SMOKE_DESKTOP_EXE || path.join(root, 'dist/AutoChe
     CHECKIN_DESKTOP_TEST_PORT: String(port), CHECKIN_TEST_STARTUP_FILE: path.join(data, 'test-startup'), CHECKIN_ALLOW_HTTP: 'true' },
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
 })
-let log = '', browser, baseURL = ''
+let log = '', browser, baseURL = '', passed = false
 app.stdout.on('data', data => log += data)
 app.stderr.on('data', data => log += data)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -71,7 +71,7 @@ try {
   await page.getByRole('heading', { name: '我的账号' }).waitFor({ timeout: 15000 })
   await assert.rejects(stat(staleCache), { code: 'ENOENT' }, 'old browser components should be reclaimed before launch')
   const metadata = await api('/meta')
-  const expectedVersion = process.env.SMOKE_EXPECT_VERSION || JSON.parse(await readFile(path.join(root, 'web/package.json'), 'utf8')).version
+  const expectedVersion = process.env.SMOKE_EXPECT_VERSION || (await readFile(path.join(root, 'internal/buildinfo/VERSION'), 'utf8')).trim()
   assert.equal(metadata.version, expectedVersion, 'smoke test must use the intended build')
   assert.equal(await page.evaluate(() => navigator.webdriver), false, 'native shell should use ordinary browser defaults')
   await page.screenshot({ path: path.join(root, 'artifacts/native-windows.png') })
@@ -147,6 +147,7 @@ try {
   await api('/desktop/action', 'POST', { action: 'quit' })
   await until(() => app.exitCode !== null, 'Tray exit did not stop the process', 15000)
   assert.equal(app.exitCode, 0)
+  passed = true
   console.log('Windows smoke passed: startup, tray menus, minimize, restore, close-to-tray, pause, startup switch, clean exit.')
 } finally {
   await writeFile(path.join(data, 'native.log'), log)
@@ -154,4 +155,7 @@ try {
   await delay(500)
   if (app.exitCode === null) app.kill()
   await new Promise(resolve => fixture.close(resolve))
+  const relative = path.relative(path.join(root, 'artifacts'), data)
+  if (passed && /^native-[A-Za-z0-9]+$/.test(relative))
+    await rm(data, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 }

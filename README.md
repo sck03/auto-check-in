@@ -2,9 +2,9 @@
 
 一个面向个人使用的多站点、多账号自动签到工具。Go 核心、Vue 3 界面、SQLite 存储；Windows 独立应用窗口和 Docker 网页共用一套业务逻辑。
 
-**v1.0.2 成品：** [Windows 下载](https://github.com/sck03/auto-check-in/releases/download/v1.0.2/AutoCheckIn-1.0.2-windows-amd64.zip) · [Docker 离线镜像](https://github.com/sck03/auto-check-in/releases/download/v1.0.2/auto-check-in-1.0.2-docker-linux-amd64.tar.gz) · [全部产物与校验和](https://github.com/sck03/auto-check-in/releases/tag/v1.0.2)
+**已发布成品：** [最新 Release 的 Windows、Docker 离线包及校验和](https://github.com/sck03/auto-check-in/releases/latest)。源码版本以 [`internal/buildinfo/VERSION`](internal/buildinfo/VERSION) 为准；main 的修改不等于已经发布新版本。
 
-镜像：`docker pull ghcr.io/sck03/auto-check-in:1.0.2`（linux/amd64、linux/arm64）。
+镜像：`docker pull ghcr.io/sck03/auto-check-in:latest`（linux/amd64、linux/arm64；需要固定版本时使用 Release 对应标签）。
 
 ## 已实现
 
@@ -17,7 +17,7 @@
 - Windows 托盘、最小化到托盘、关闭窗口后继续运行、登录 Windows 后自动启动及托盘右键菜单。
 - 单个后台浏览器进程、最多两个隔离会话、空闲 60 秒释放；隐藏界面停止轮询。
 
-当前源码为 **1.0.3**，包含以下兼容性修复（尚未发布到 Releases）：
+当前源码包含以下站点兼容性与稳定性改进；本轮修复与验证范围见 [维护记录](docs/maintenance-20261024.md)：
 
 | 站点 | 每日操作 |
 | --- | --- |
@@ -44,6 +44,8 @@ AgentRouter 的个人设置页是 `/console/personal`，用户信息接口仍是
 
 管理界面空闲时每 30 秒刷新，任务进行中每 5 秒刷新，手动操作和重新显示窗口会立即刷新；隐藏界面停止轮询。
 
+账号已绑定用户 ID 后，身份不匹配会停止执行并保留原凭据。结果写入失败使用独立截止时间重试；仍不可写时只恢复本地记录，不重复访问站点。数据库恢复后账号转为待核对，重启也会保留中断语义。同站点任务等待时保留在队列中，其他站点可继续执行。
+
 奖励金额来自站点响应，不固定为 $25；余额差额不会被当作签到奖励。验证包含本地模拟站点和 AgentRouter 真实账号，具体结果见 [进度与验收](docs/progress.md)。
 
 ## Windows 直接运行
@@ -61,7 +63,7 @@ AgentRouter 的个人设置页是 `/console/personal`，用户信息接口仍是
 
 **为什么旧版 `data/desktop-browser` 接近 500 MB？** 它是管理窗口使用的 Edge / Chrome 配置目录，浏览器会下载组件、模型和媒体模块；这些并非签到必需数据。当前版本仅对管理窗口关闭组件更新、后台联网、同步与扩展，设置网页磁盘缓存目标 8 MiB、媒体缓存目标 1 MiB；这两个值不是整个目录的硬上限。启动时回收旧目录，窗口关闭或收起托盘后删除临时配置；异常退出留下的目录在下次打开时回收。本机实测旧目录约 497 MiB，优化后窗口运行期间约 21 MiB，关闭后目录消失；实际大小随浏览器版本变化。账号会话仍保存在加密数据库中，独立登录窗口保持原有浏览器参数。
 
-本次整理按全新安装处理，使用新的空 `data` 目录重新添加站点和账号，不兼容旧数据库或旧模板配置，也不再从系统缓存目录自动导入。可使用 `-data` 或 `CHECKIN_DATA_DIR` 指定新目录；同版本数据可重开并使用加密备份恢复。
+当前数据库格式为 v5，已有 v5 数据可直接重开，默认端口地址及旧 localStorage origin 会自动归一化。不兼容更早或更高版本的数据库，也不从系统缓存目录自动导入。新安装可使用 `-data` 或 `CHECKIN_DATA_DIR` 指定空目录；支持导出和恢复加密备份。
 
 设置页可控制托盘和开机运行。开机运行默认关闭，启用后在**当前用户登录 Windows 后**直接驻留托盘。程序退出后不会执行计划；睡眠和关机期间也不会执行。
 
@@ -87,6 +89,8 @@ docker compose exec checkin sh -c 'cat /data/access.token'
 打开 `http://127.0.0.1:18990`，输入上一步在运行设备上读取的管理访问令牌。数据保存在 `checkin-data` 命名卷。若需局域网访问，可在 `.env` 中设置 `CHECKIN_BIND_IP=0.0.0.0`；公网部署应由 HTTPS 反向代理提供入口。
 
 容器包含 Chromium，人工登录通过管理页面完成，无需开放 CDP/VNC。已通过 GitHub 中的实际容器启动、Chromium 登录/签到和重启持久化测试，详细记录见 [进度与验收](docs/progress.md)。
+
+`docker compose` 本地构建使用 `auto-check-in:local` 标签；程序内的版本来自统一版本文件，发布镜像使用对应 Release 标签。
 
 ## 构建与测试
 

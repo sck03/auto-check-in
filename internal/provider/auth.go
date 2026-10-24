@@ -11,9 +11,14 @@ import (
 	"auto-check-in/internal/transport"
 )
 
-func authenticated(resp port.Response, expectedID string) bool {
+// Authenticated checks business identity, rather than trusting an HTTP success alone.
+func Authenticated(resp port.Response, expectedID string) bool {
 	id := transport.UserID(resp.Body)
 	return resp.Status >= 200 && resp.Status < 300 && id != "" && (expectedID == "" || id == expectedID)
+}
+
+func identityFailure(resp port.Response) domain.Result {
+	return domain.Result{Status: domain.NeedsAttention, Message: "站点返回的登录身份与此账号不符或缺少身份信息，原会话未更新", Evidence: "session_invalid", HTTPStatus: resp.Status, Advice: "确认登录的是此账号；如需更换身份，请编辑账号并明确清除旧会话。"}
 }
 
 var expiredSessionPattern = regexp.MustCompile(`(?i)(未登[录陆]|登录.{0,8}(过期|失效)|会话.{0,8}(过期|失效)|session.{0,8}expired|unauthorized|not logged in)`)

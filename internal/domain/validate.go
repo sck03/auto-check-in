@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -24,7 +25,7 @@ func (s *Site) Validate(allowHTTP bool) error {
 		return fmt.Errorf("站点必须使用 HTTPS；本地测试可显式启用 HTTP")
 	}
 	u.Host = strings.ToLower(u.Host)
-	s.BaseURL = u.String()
+	s.BaseURL = CanonicalOrigin(u.String())
 	template, ok := TemplateByID(s.TemplateID)
 	if !ok || !template.Supports(s.Adapter) {
 		return fmt.Errorf("请选择有效的平台模板和签到方式")
@@ -67,6 +68,23 @@ func (s *Site) Validate(allowHTTP bool) error {
 		}
 	}
 	return nil
+}
+
+// CanonicalOrigin uses the same default-port representation as location.origin.
+// Callers validate the URL first; this function never changes a non-default port.
+func CanonicalOrigin(origin string) string {
+	u, err := url.Parse(origin)
+	if err != nil || u.Hostname() == "" {
+		return origin
+	}
+	u.Host = strings.ToLower(u.Host)
+	if u.Scheme == "https" && u.Port() == "443" || u.Scheme == "http" && u.Port() == "80" {
+		u.Host = u.Hostname()
+		if net.ParseIP(u.Host) != nil && strings.Contains(u.Host, ":") {
+			u.Host = "[" + u.Host + "]"
+		}
+	}
+	return u.String()
 }
 
 func ValidatePath(p string) error {

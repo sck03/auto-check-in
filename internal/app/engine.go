@@ -10,33 +10,40 @@ import (
 	"time"
 )
 
-type originGate struct {
-	token chan struct{}
-	next  time.Time
-}
 type Engine struct {
 	repo         port.Repository
 	executor     port.Executor
 	wg           sync.WaitGroup
 	mu           sync.Mutex
-	gates        map[string]*originGate
+	gates        map[string]originState
 	wake         chan struct{}
 	scheduleWake chan struct{}
 	wakeMu       sync.Mutex
+	persistMu    sync.Mutex
+	pending      map[string]pendingResult
+	recoveryWake chan struct{}
+	saveFailures uint64
 }
 
 func NewEngine(repo port.Repository, executor port.Executor) *Engine {
-	return &Engine{repo: repo, executor: executor, gates: map[string]*originGate{}, wake: make(chan struct{}), scheduleWake: make(chan struct{})}
+	return &Engine{repo: repo, executor: executor, gates: map[string]originState{}, wake: make(chan struct{}), scheduleWake: make(chan struct{}), pending: map[string]pendingResult{}, recoveryWake: make(chan struct{}, 1)}
 }
 func (e *Engine) Start(ctx context.Context) {
 	e.wg.Add(1)
 	go func() { defer e.wg.Done(); e.scheduleLoop(ctx) }()
+	e.wg.Add(1)
+	go func() { defer e.wg.Done(); e.recoveryLoop(ctx) }()
 	for i := 0; i < 4; i++ {
 		e.wg.Add(1)
 		go func(index int) { defer e.wg.Done(); e.worker(ctx, index) }(i)
 	}
 }
-func (e *Engine) Wait() { e.wg.Wait() }
+func (e *Engine) Wait() {
+	e.wg.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	e.retryPending(ctx)
+}
 func (e *Engine) Notify() {
 	e.wakeMu.Lock()
 	close(e.scheduleWake)
@@ -53,11 +60,19 @@ func (e *Engine) subscription() <-chan struct{} {
 	defer e.wakeMu.Unlock()
 	return e.wake
 }
-func (e *Engine) waitForWork(ctx context.Context, wake <-chan struct{}) bool {
+func (e *Engine) waitForWork(ctx context.Context, wake <-chan struct{}, deadline time.Time) bool {
+	var tick <-chan time.Time
+	if !deadline.IsZero() {
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		tick = timer.C
+	}
 	select {
 	case <-ctx.Done():
 		return false
 	case <-wake:
+		return true
+	case <-tick:
 		return true
 	}
 }
@@ -148,13 +163,17 @@ func (e *Engine) worker(ctx context.Context, index int) {
 			continue
 		}
 		if index >= settings.Concurrency {
-			if !e.waitForWork(ctx, wake) {
+			if !e.waitForWork(ctx, wake, time.Time{}) {
 				return
 			}
 			continue
 		}
-		run, err := e.repo.Claim(ctx, settings.SchedulerEnabled, time.Now().UTC())
+		run, origin, next, err := e.claim(ctx, settings)
 		if err != nil {
+			if run != nil {
+				e.finishResult(pendingResult{id: run.ID, result: domain.Result{Status: domain.Failed, Message: "读取任务配置失败，未访问站点", Evidence: "configuration_error", Retryable: true}, settings: settings, at: time.Now().UTC()})
+				e.Notify()
+			}
 			if ctx.Err() == nil {
 				slog.Error("task claim failed", "error", err)
 			}
@@ -164,23 +183,13 @@ func (e *Engine) worker(ctx context.Context, index int) {
 			continue
 		}
 		if run == nil {
-			if !e.waitForWork(ctx, wake) {
+			if !e.waitForWork(ctx, wake, next) {
 				return
 			}
 			continue
 		}
-		e.execute(ctx, *run, settings)
+		e.execute(ctx, *run, settings, func() { e.releaseOrigin(origin, settings.SiteGapSeconds) })
 	}
-}
-func (e *Engine) gate(origin string) *originGate {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	g := e.gates[origin]
-	if g == nil {
-		g = &originGate{token: make(chan struct{}, 1)}
-		e.gates[origin] = g
-	}
-	return g
 }
 func wait(ctx context.Context, d time.Duration) bool {
 	timer := time.NewTimer(d)
@@ -192,7 +201,7 @@ func wait(ctx context.Context, d time.Duration) bool {
 		return true
 	}
 }
-func (e *Engine) execute(ctx context.Context, run domain.Run, settings domain.Settings) {
+func (e *Engine) execute(ctx context.Context, run domain.Run, settings domain.Settings, onExecuted func()) {
 	defer e.Notify()
 	result := domain.Result{Status: domain.Failed, Message: "无法读取账号配置", Evidence: "configuration_error"}
 	var updated *domain.Credentials
@@ -205,54 +214,32 @@ func (e *Engine) execute(ctx context.Context, run domain.Run, settings domain.Se
 			creds, err = e.repo.Credentials(ctx, a.ID)
 		}
 		if err == nil {
-			g := e.gate(site.BaseURL)
-			acquired := false
-			select {
-			case g.token <- struct{}{}:
-				acquired = true
-			case <-ctx.Done():
+			now := time.Now()
+			start, end := a.Schedule.Bounds(now)
+			if run.Trigger == "scheduled_retry" {
+				start, end = a.Schedule.RetryBounds(now)
 			}
-			if acquired {
-				if wait(ctx, time.Until(g.next)) {
-					now := time.Now()
-					start, end := a.Schedule.Bounds(now)
-					if run.Trigger == "scheduled_retry" {
-						start, end = a.Schedule.RetryBounds(now)
-					}
-					automatic := run.Trigger == "scheduled" || run.Trigger == "scheduled_retry"
-					if automatic && (now.Before(start) || !now.Before(end)) {
-						result = domain.Result{Status: domain.Cancelled, Message: "等待期间已超过本日窗口，安排至下次窗口", Evidence: "schedule_deferred"}
-					} else {
-						deadline := now.Add(time.Duration(settings.TaskTimeoutSeconds) * time.Second)
-						if automatic && end.Before(deadline) {
-							deadline = end
-						}
-						taskCtx, cancel := context.WithDeadline(ctx, deadline)
-						result, updated = e.safeExecute(taskCtx, site, creds)
-						cancel()
-					}
-				} else {
-					result = domain.Result{Status: domain.Interrupted, Message: "任务在执行前被中断", Evidence: "shutdown"}
-				}
-				g.next = time.Now().Add(time.Duration(settings.SiteGapSeconds) * time.Second)
-				<-g.token
+			automatic := run.Trigger == "scheduled" || run.Trigger == "scheduled_retry"
+			if automatic && (now.Before(start) || !now.Before(end)) {
+				result = domain.Result{Status: domain.Cancelled, Message: "等待期间已超过本日窗口，安排至下次窗口", Evidence: "schedule_deferred"}
 			} else {
-				result = domain.Result{Status: domain.Interrupted, Message: "任务在执行前被中断", Evidence: "shutdown"}
+				deadline := now.Add(time.Duration(settings.TaskTimeoutSeconds) * time.Second)
+				if automatic && end.Before(deadline) {
+					deadline = end
+				}
+				taskCtx, cancel := context.WithDeadline(ctx, deadline)
+				result, updated = e.safeExecute(taskCtx, site, creds)
+				cancel()
 			}
 		}
 	}
 	if ctx.Err() != nil && result.Status == domain.Failed {
 		result = domain.Result{Status: domain.Interrupted, Message: "程序退出导致任务中断", Evidence: "shutdown"}
 	}
-	finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err = e.repo.Finish(finishCtx, run.ID, result, updated, settings, time.Now().UTC()); err != nil {
-		slog.Error("task result could not be saved", "run_id", run.ID, "error", err)
-		fallback := domain.Result{Status: domain.Unverified, Message: "执行结束，但会话或结果保存失败；请核对站点结果", Evidence: "persistence_error"}
-		if err = e.repo.Finish(finishCtx, run.ID, fallback, nil, settings, time.Now().UTC()); err != nil {
-			slog.Error("task requires recovery", "run_id", run.ID, "error", err)
-		}
+	if onExecuted != nil {
+		onExecuted()
 	}
+	e.finishResult(pendingResult{id: run.ID, result: result, credentials: updated, settings: settings, at: time.Now().UTC()})
 }
 func (e *Engine) safeExecute(ctx context.Context, site domain.Site, c domain.Credentials) (result domain.Result, updated *domain.Credentials) {
 	defer func() {

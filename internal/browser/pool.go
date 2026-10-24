@@ -8,18 +8,19 @@ import (
 )
 
 type PoolStats struct {
-	Running            bool `json:"running"`
-	Active             int  `json:"active"`
-	Capacity           int  `json:"capacity"`
-	Starts             int  `json:"starts"`
-	IdleReleaseSeconds int  `json:"idle_release_seconds"`
-	NativeWindows      int  `json:"native_windows"`
+	Running            bool           `json:"running"`
+	Active             int            `json:"active"`
+	Capacity           int            `json:"capacity"`
+	Starts             int            `json:"starts"`
+	IdleReleaseSeconds int            `json:"idle_release_seconds"`
+	NativeWindows      int            `json:"native_windows"`
+	ProfileCleanup     ProfileCleanup `json:"profile_cleanup"`
 }
 
 func (f *Factory) Stats() PoolStats {
 	f.poolMu.Lock()
 	defer f.poolMu.Unlock()
-	return PoolStats{f.pool != nil || len(f.visible) > 0, f.active + len(f.visible), cap(f.slots), f.starts, int(f.config.IdleTimeout.Seconds()), len(f.visible)}
+	return PoolStats{Running: f.pool != nil || len(f.visible) > 0, Active: f.active + len(f.visible), Capacity: cap(f.slots), Starts: f.starts, IdleReleaseSeconds: int(f.config.IdleTimeout.Seconds()), NativeWindows: len(f.visible), ProfileCleanup: f.cleanup}
 }
 func (f *Factory) Diagnostics() any { return f.Stats() }
 func (f *Factory) acquirePool(ctx context.Context) (context.Context, error) {

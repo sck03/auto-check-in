@@ -22,13 +22,14 @@ type LoginInfo struct {
 	NativeWindow bool      `json:"native_window"`
 }
 type loginSession struct {
-	mu      sync.RWMutex
-	info    LoginInfo
-	session port.InteractiveSession
-	site    domain.Site
-	creds   domain.Credentials
-	cancel  context.CancelFunc
-	closed  bool
+	mu           sync.RWMutex
+	info         LoginInfo
+	session      port.InteractiveSession
+	site         domain.Site
+	creds        domain.Credentials
+	expectedUser string
+	cancel       context.CancelFunc
+	closed       bool
 }
 
 func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginInfo, err error) {
@@ -69,7 +70,10 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status, message = domain.Cancelled, "登录启动已取消"
 		}
-		_ = s.Repo.FinishLogin(finishCtx, run.ID, nil, status, message, time.Now().UTC())
+		now := time.Now().UTC()
+		if e := s.Repo.FinishLogin(finishCtx, run.ID, nil, status, message, now); e != nil {
+			s.Engine.queueResult(pendingResult{id: run.ID, login: true, result: domain.Result{Status: status, Message: message}, at: now})
+		}
 		s.Engine.Notify()
 	}()
 	a, err := s.Repo.Account(ctx, accountID)
@@ -107,7 +111,7 @@ func (s *Service) StartLogin(ctx context.Context, accountID string) (info LoginI
 		return info, err
 	}
 	info = LoginInfo{ID: run.ID, AccountID: accountID, ExpiresAt: expires, Width: 1200, Height: 800, NativeWindow: session.NativeWindow()}
-	entry := &loginSession{info: info, session: session, site: site, creds: c, cancel: cancel}
+	entry := &loginSession{info: info, session: session, site: site, creds: c, expectedUser: credentials.APIUser, cancel: cancel}
 	s.mu.Lock()
 	s.logins[run.ID] = entry
 	s.mu.Unlock()
@@ -178,34 +182,9 @@ func (s *Service) SaveLogin(ctx context.Context, id string) error {
 	if entry.closed {
 		return domain.ErrNotFound
 	}
-	// AgentRouter rewards a fresh login. Its observed login response also proves
-	// the new session when a separate profile request is intercepted by its WAF.
-	confirmed := entry.site.Adapter == "agentrouter" && entry.session.ConfirmedLogin(ctx)
-	if entry.site.Adapter != "browser" && !confirmed {
-		response, err := entry.session.Request(ctx, "GET", entry.site.UserInfoPath, nil)
-		if err != nil {
-			return fmt.Errorf("请先在站点完成登录并返回站点页面：%s", security.Redact(err.Error(), entry.creds))
-		}
-		if failure := provider.HTTPFailure(response); failure != nil {
-			return fmt.Errorf("登录验证未通过：%s", security.Redact(failure.Message, entry.creds))
-		}
-		payload, err := provider.Decode(response.Body)
-		if err != nil || response.Status < 200 || response.Status >= 300 || payload["success"] != true {
-			message, _ := payload["message"].(string)
-			if message == "" {
-				message = "用户信息接口未返回有效的登录成功响应"
-			}
-			return fmt.Errorf("登录尚未通过站点验证（HTTP %d）：%s", response.Status, security.Redact(message, entry.creds))
-		}
-		if entry.site.Adapter == "x666" {
-			if _, ok := payload["can_spin"].(bool); !ok {
-				return fmt.Errorf("薄荷签到会话未通过验证，请在 up.x666.me 完成 LinuxDO 登录")
-			}
-		}
-	}
-	c, err := entry.session.Snapshot(ctx)
+	c, err := verifyLoginSession(ctx, entry)
 	if err != nil {
-		return fmt.Errorf("无法读取浏览器会话，请重试")
+		return err
 	}
 	if len(c.Cookies) == 0 && c.Token == "" && len(c.Storage[entry.site.BaseURL]) == 0 {
 		return fmt.Errorf("没有可保存的登录会话")
@@ -238,6 +217,9 @@ func (s *Service) closeLogin(entry *loginSession, c *domain.Credentials, status,
 	err := s.Repo.FinishLogin(ctx, entry.info.ID, c, status, message, time.Now().UTC())
 	if err != nil && c != nil {
 		return err
+	}
+	if err != nil {
+		s.Engine.queueResult(pendingResult{id: entry.info.ID, login: true, result: domain.Result{Status: status, Message: message}, at: time.Now().UTC()})
 	}
 	entry.closed = true
 	entry.cancel()

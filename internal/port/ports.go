@@ -82,7 +82,8 @@ type Repository interface {
 	DueAccounts(context.Context, time.Time) ([]string, error)
 	NextScheduled(context.Context) (*time.Time, error)
 	Enqueue(context.Context, string, string, time.Time) (domain.Run, error)
-	Claim(context.Context, bool, time.Time) (*domain.Run, error)
+	// Claim skips origins reserved by the caller, without consuming their tasks.
+	Claim(context.Context, bool, time.Time, ...string) (*domain.Run, error)
 	Finish(context.Context, string, domain.Result, *domain.Credentials, domain.Settings, time.Time) error
 	CancelQueued(context.Context, string, time.Time) error
 	BeginLogin(context.Context, string, time.Time) (domain.Run, error)

@@ -143,6 +143,9 @@ func Start(config Config) (rt *Runtime, err error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	browsers := browser.New(browser.Config{Executable: config.BrowserPath, TempDir: filepath.Join(dir, "temporary"), ProxyURL: config.ProxyURL, NoSandbox: config.NoSandbox, InteractiveVisible: config.Desktop})
+	if cleanupErr := browsers.ReclaimProfiles(); cleanupErr != nil {
+		slog.Warn("some browser profiles could not be reclaimed", "error", cleanupErr)
+	}
 	executor := &provider.Runner{Factory: transport.Factory{Browser: browsers, ProxyURL: config.ProxyURL}}
 	service := app.New(ctx, repo, executor, browsers, config.AllowHTTP)
 	host, port, _ := net.SplitHostPort(listener.Addr().String())

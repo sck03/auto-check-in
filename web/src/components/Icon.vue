@@ -8,7 +8,6 @@ const paths: Record<string, string> = {
   settings: 'M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6',
   plus: 'M12 5v14 M5 12h14',
   play: 'M8 5l11 7-11 7z',
-  pause: 'M8 5v14 M16 5v14',
   refresh: 'M20 7v5h-5 M4 17v-5h5 M6.1 7a7 7 0 0 1 11.5-2L20 8 M4 16l2.4 3a7 7 0 0 0 11.5-2',
   search: 'M11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14 M16 16l5 5',
   edit: 'M15 5l4 4 M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z',

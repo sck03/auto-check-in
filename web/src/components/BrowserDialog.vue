@@ -17,7 +17,8 @@ const showText = ref(false),
   busy = ref(false),
   closing = ref(false),
   pending = ref(0),
-  ended = ref(false)
+  ended = ref(false),
+  inputFailed = ref(false)
 const keyboard = ref<HTMLTextAreaElement>()
 const lifetime = new AbortController()
 let alive = true,
@@ -89,14 +90,17 @@ async function capture() {
   }
 }
 async function input(event: BrowserInput) {
-  if (busy.value || !alive) return false
+  if (busy.value || inputFailed.value || !alive) return false
   error.value = ''
   pending.value++
   try {
     await queue.push(event)
     return alive
   } catch (e) {
-    if (alive) error.value = (e as Error).message
+    if (alive) {
+      inputFailed.value = true
+      error.value = (e as Error).message + '；后续输入已停止，请核对网页并重新输入未送达的内容。'
+    }
     return false
   } finally {
     pending.value--
@@ -111,6 +115,13 @@ function click(event: MouseEvent) {
     y: ((event.clientY - rect.top) * img.naturalHeight) / rect.height,
   })
   keyboard.value?.focus({ preventScroll: true })
+}
+async function resumeInput() {
+  if (pending.value || !alive) return
+  await queue.reset()
+  inputFailed.value = false
+  error.value = ''
+  refreshSoon()
 }
 function flushKeyboard() {
   const entry = keyboard.value
@@ -165,6 +176,7 @@ async function sendText() {
   if (!(await input({ type: 'text', text: value })) && !text.value && alive) text.value = value
 }
 async function save() {
+  if (busy.value || inputFailed.value || !alive) return
   flushKeyboard()
   busy.value = true
   error.value = ''
@@ -239,6 +251,14 @@ onBeforeUnmount(() => {
     <div v-if="error || frameError" class="notice error" role="alert">
       {{ error || frameError }}
     </div>
+    <button
+      v-if="inputFailed"
+      class="button secondary"
+      :disabled="pending > 0 || busy || ended"
+      @click="resumeInput"
+    >
+      已核对网页，继续输入
+    </button>
     <div v-if="info.native_window" class="native-login">
       <Icon name="globe" :size="36" />
       <h3>独立登录窗口已打开</h3>
@@ -290,6 +310,7 @@ onBeforeUnmount(() => {
         autocomplete="off"
         autocapitalize="off"
         :spellcheck="false"
+        :disabled="busy || inputFailed || ended"
         @input="directText"
         @keydown="key"
         @compositionstart="composing = true"
@@ -314,7 +335,11 @@ onBeforeUnmount(() => {
     <template #footer>
       <span class="footer-note">此会话仅属于当前账号，结束后清理临时浏览器。</span>
       <button class="button secondary" :disabled="closing" @click="close">取消登录</button>
-      <button class="button primary" :disabled="busy || closing || ended" @click="save">
+      <button
+        class="button primary"
+        :disabled="busy || closing || ended || inputFailed"
+        @click="save"
+      >
         {{ busy ? '验证并保存中…' : '保存会话' }}
       </button>
     </template>

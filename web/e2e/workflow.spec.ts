@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { createServer } from 'node:http'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,6 +16,7 @@ let fixture: ReturnType<typeof createServer>
 const checked = new Set<string>()
 const calls = new Map<string, number>()
 let errors: string[] = []
+let loginDelay = 0
 
 async function api(route: string, method = 'GET', data?: unknown) {
   const response = await fetch(url + '/api/v1' + route, {
@@ -30,6 +31,7 @@ async function start() {
   checked.clear()
   calls.clear()
   errors = []
+  loginDelay = 0
   fixture = createServer(async (req, res) => {
     const route = new URL(req.url || '/', 'http://fixture').pathname
     const send = (data: unknown, status = 200) => {
@@ -49,6 +51,7 @@ async function start() {
         send({ success: false, message: '用户名或密码不正确' })
         return
       }
+      if (loginDelay) await new Promise((resolve) => setTimeout(resolve, loginDelay))
       res.setHeader('Set-Cookie', 'session=' + data.username + '; HttpOnly; Path=/; SameSite=Lax')
       send({ success: true, data: { id: data.username, checked_in: false } })
       return
@@ -120,10 +123,19 @@ test.beforeEach(async ({ page }) => {
   await page.goto(url + '/#token=' + token)
   await expect(page.getByRole('heading', { name: '我的账号' })).toBeVisible()
 })
-test.afterEach(async () => {
+test.afterEach(async ({}, testInfo) => {
   await saveLog?.()
+  const stopped =
+    server && server.exitCode === null
+      ? new Promise<void>((resolve) => server.once('exit', () => resolve()))
+      : Promise.resolve()
   server?.kill()
-  await new Promise<void>((resolve) => fixture?.close(() => resolve()))
+  await stopped
+  fixture?.closeAllConnections()
+  if (fixture) await new Promise<void>((resolve) => fixture.close(() => resolve()))
+  const relative = path.relative(path.join(root, 'artifacts'), directory)
+  if (testInfo.status === testInfo.expectedStatus && /^e2e-[A-Za-z0-9]+$/.test(relative))
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 })
 async function seedSite() {
   const templates = await api('/templates')
@@ -346,6 +358,7 @@ test('清除旧会话会清除 Token 和用户 ID，并保留登录密码', asyn
 })
 
 test('人工浏览器登录并保存独立会话', async ({ page }) => {
+  loginDelay = 600
   await page.route('**/api/v1/sessions/*/input', async (route) => {
     const input = route.request().postDataJSON()
     if (input.type === 'text' && input.text === 'login-user')
@@ -526,6 +539,76 @@ async function pauseWorkspacePolling(page: Page) {
   await page.reload()
   await expect(page.getByRole('heading', { name: '我的账号' })).toBeVisible()
 }
+
+test('桌面设置忽略保存前的旧读取，隐藏和离开页面时停止读取', async ({ page }) => {
+  let state = {
+    preferences: { autostart: false, minimize_to_tray: true, close_to_tray: true, version: 1 },
+    tray_ready: true,
+    window_open: true,
+    last_error: '',
+    menu: [],
+  }
+  let reads = 0
+  let release = () => {}
+  let captured = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const oldRead = new Promise<void>((resolve) => {
+    captured = resolve
+  })
+  await page.route('**/api/v1/meta', async (route) => {
+    const response = await route.fetch()
+    await route.fulfill({ json: { ...(await response.json()), desktop: true } })
+  })
+  await page.route('**/api/v1/desktop', async (route) => {
+    if (route.request().method() === 'PUT') {
+      const prefs = route.request().postDataJSON()
+      expect(prefs.version).toBe(state.preferences.version)
+      state = { ...state, preferences: { ...prefs, version: prefs.version + 1 } }
+      await route.fulfill({ json: state })
+      return
+    }
+    reads++
+    const snapshot = structuredClone(state)
+    if (reads === 2) {
+      captured()
+      await gate
+    }
+    await route.fulfill({ json: snapshot }).catch(() => undefined)
+  })
+  await pauseWorkspacePolling(page)
+  await selectNav(page, '设置')
+  const toggle = page.getByRole('switch', { name: '登录 Windows 后自动启动' })
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  await page.clock.runFor(5001)
+  await oldRead
+  try {
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    release()
+    await page.clock.runFor(100)
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    const before = reads
+    await page.clock.runFor(60000)
+    expect(reads).toBe(before)
+    await selectNav(page, '账号签到')
+    await page.clock.runFor(60000)
+    expect(reads).toBe(before)
+    expect(errors).toEqual([])
+  } finally {
+    release()
+  }
+})
 
 test('空闲降低轮询频率，运行中及时刷新，隐藏界面停止轮询', async ({ page }) => {
   const account = await seedAccount('轮询账号', false)

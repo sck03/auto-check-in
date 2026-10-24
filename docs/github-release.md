@@ -8,6 +8,10 @@
 
 **Release**：推送 `v*` 标签或在 Actions 手动输入版本标签。版本格式如 `v1.0.2`。
 
+唯一版本源为 `internal/buildinfo/VERSION`。普通 Go 构建直接嵌入该文件；Windows 脚本默认读取它；Docker 未传 VERSION 时也使用嵌入值，Compose 本地镜像命名为 `auto-check-in:local`。前端是私有包，界面版本只使用后端 `/meta`，不再维护重复版本号。
+
+Release 首先检出指定标签，核对标签与该标签源码中的 VERSION 一致；Windows 和 Docker 均构建这个标签。手动触发须指定已经存在的标签，不会把当前 main 内容误标为旧版本。更新版本文件、完成 Verify 后再建立发布标签；推送 main 本身不会创建 Release。
+
 产物：
 
 - `AutoCheckIn-版本-windows-amd64.zip`：`AutoCheckIn.exe`、`checkin-server.exe`、简短 `README.md`、合并后的 `THIRD_PARTY_NOTICES.md`。
@@ -27,8 +31,9 @@ Docker 内的应用声明也合并为 `/usr/share/doc/auto-check-in/THIRD_PARTY_
 ## 触发
 
 ```bash
-git tag v1.0.2
-git push origin v1.0.2
+VERSION="$(tr -d '\r\n' < internal/buildinfo/VERSION)"
+git tag "v$VERSION"
+git push origin "v$VERSION"
 ```
 
 也可在 [Release 工作流](https://github.com/sck03/auto-check-in/actions/workflows/release.yml) 选择 Run workflow，输入标签。正式更新使用新的版本号；不要覆盖已发布标签。
@@ -36,13 +41,13 @@ git push origin v1.0.2
 ## 使用成品
 
 ```bash
-docker pull ghcr.io/sck03/auto-check-in:1.0.2
+docker pull ghcr.io/sck03/auto-check-in:latest
 docker run -d --name auto-check-in --restart unless-stopped \
   -p 127.0.0.1:18990:18990 -v checkin-data:/data \
-  ghcr.io/sck03/auto-check-in:1.0.2
+  ghcr.io/sck03/auto-check-in:latest
 
-# 离线导入同一成品
-docker load -i auto-check-in-1.0.2-docker-linux-amd64.tar.gz
+# 离线导入：从 Release 下载对应文件后替换文件名
+docker load -i auto-check-in-版本-docker-linux-amd64.tar.gz
 ```
 
 Windows 解压 ZIP 后运行 AutoCheckIn.exe。发布包未进行代码签名。

@@ -46,7 +46,7 @@ func (r *sleepingRepository) Enqueue(context.Context, string, string, time.Time)
 	r.next = time.Time{}
 	return domain.Run{}, nil
 }
-func (r *sleepingRepository) Claim(context.Context, bool, time.Time) (*domain.Run, error) {
+func (r *sleepingRepository) Claim(context.Context, bool, time.Time, ...string) (*domain.Run, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.claims++

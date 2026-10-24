@@ -27,7 +27,6 @@ func enableNetwork(ctx context.Context) error {
 func native(action chromedp.Action[chromedp.Void]) cdpActionFunc {
 	return func(ctx context.Context) error { return chromedp.Do(ctx, action) }
 }
-func cdpNavigate(url string) cdpActionFunc { return native(chromedp.Navigate(url)) }
 func cdpReload() cdpActionFunc {
 	return func(ctx context.Context) error {
 		_, err := cdp.Call(ctx, chromedp.FromContext(ctx).Target, page.Reload, page.ReloadParams{})

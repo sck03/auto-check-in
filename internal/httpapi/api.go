@@ -187,7 +187,7 @@ func (a *API) routes() {
 	m.HandleFunc("GET /api/v1/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		var memory runtime.MemStats
 		runtime.ReadMemStats(&memory)
-		data := map[string]any{"go_heap_bytes": memory.HeapAlloc, "goroutines": runtime.NumGoroutine()}
+		data := map[string]any{"go_heap_bytes": memory.HeapAlloc, "goroutines": runtime.NumGoroutine(), "engine": s.Engine.Stats()}
 		if reporter, ok := s.Browser.(interface{ Diagnostics() any }); ok {
 			data["browser_pool"] = reporter.Diagnostics()
 		}

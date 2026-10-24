@@ -41,11 +41,11 @@ func TestRestoredStorageDoesNotOverwriteSiteChanges(t *testing.T) {
 		}
 	}
 	readUser(`{"id":"old-user"}`)
-	if err := driver.run(ctx, cdpEvaluate(`localStorage.setItem('user', '{"id":"new-user"}')`, nil), cdpNavigate(site.BaseURL+"/console")); err != nil {
+	if err := driver.run(ctx, cdpEvaluate(`localStorage.setItem('user', '{"id":"new-user"}')`, nil), cdpNavigateDOMReady(site.BaseURL+"/console")); err != nil {
 		t.Fatal(err)
 	}
 	readUser(`{"id":"new-user"}`)
-	if err := driver.run(ctx, cdpEvaluate("localStorage.removeItem('user')", nil), cdpNavigate(site.BaseURL+site.LoginPath)); err != nil {
+	if err := driver.run(ctx, cdpEvaluate("localStorage.removeItem('user')", nil), cdpNavigateDOMReady(site.BaseURL+site.LoginPath)); err != nil {
 		t.Fatal(err)
 	}
 	readUser("")

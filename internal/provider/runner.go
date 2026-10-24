@@ -4,6 +4,7 @@ import (
 	"auto-check-in/internal/domain"
 	"auto-check-in/internal/port"
 	"auto-check-in/internal/security"
+	"auto-check-in/internal/transport"
 	"context"
 	"errors"
 	"fmt"
@@ -65,10 +66,22 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 		return failure(err), nil
 	}
 	defer session.Close()
+	verified := false
+	verifiedUser := c.APIUser
 	defer func() {
-		if snapshot, e := session.Snapshot(ctx); e == nil {
-			updated = &snapshot
+		// A rejected identity must never become the expected identity of a later run.
+		if !verified {
+			return
 		}
+		snapshot, e := session.Snapshot(ctx)
+		if e != nil || snapshot.Validate(site) != nil {
+			return
+		}
+		if verifiedUser != "" && snapshot.APIUser != verifiedUser {
+			result = domain.Result{Status: domain.Unverified, Message: "执行期间用户身份发生变化，原会话未更新；请核对站点结果", Evidence: "session_invalid"}
+			return
+		}
+		updated = &snapshot
 	}()
 	stage = "session_check"
 	valid := false
@@ -78,7 +91,11 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 			return failure(e), nil
 		}
 		before = Balance(resp)
-		valid = authenticated(resp, c.APIUser)
+		valid = Authenticated(resp, c.APIUser)
+		verified = valid
+		if valid {
+			verifiedUser = transport.UserID(resp.Body)
+		}
 		// A timeout, outage, challenge or wrong identity is not proof that the
 		// saved session expired. Reauthentication can revoke other sessions.
 		if !valid && (c.Method == "cookie" || !sessionExpired(resp)) {
@@ -98,11 +115,28 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 		if f := loginFailure(login); f != nil {
 			return *f, nil
 		}
+		if site.Adapter != "browser" && site.Adapter != "x666" {
+			identity := login
+			if transport.UserID(identity.Body) == "" {
+				identity, err = session.Request(ctx, "GET", site.UserInfoPath, nil)
+				if err != nil {
+					return failure(err), nil
+				}
+			}
+			if !Authenticated(identity, c.APIUser) {
+				return identityFailure(identity), nil
+			}
+			verified = true
+			verifiedUser = transport.UserID(identity.Body)
+		}
 	}
 	stage = "checkin"
 	result, err = adapter.CheckIn(ctx, session, site, login)
 	if err != nil {
 		return failure(err), nil
+	}
+	if site.Adapter == "browser" || site.Adapter == "x666" {
+		verified = result.Complete()
 	}
 	if site.Adapter != "browser" && site.Adapter != "x666" && result.BalanceAfter == nil && result.Complete() {
 		if resp, e := session.Request(ctx, "GET", site.UserInfoPath, nil); e == nil {
