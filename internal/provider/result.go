@@ -13,7 +13,8 @@ import (
 	"auto-check-in/internal/transport"
 )
 
-var alreadyPattern = regexp.MustCompile(`(?i)(今日已签到|今天已签到|今天已经签到|今日已经签到|已经签到|重复签到|already\s+(checked|signed)[ -]?in|already\s+checked\s+in\s+today)`)
+// Match complete acknowledgements, never fragments inside errors or negations.
+var alreadyPattern = regexp.MustCompile(`(?i)^(?:(?:今日|今天)?(?:已|已经)签到(?:了)?(?:[,，;；]\s*(?:请勿重复(?:签到|操作)|请明天再来))?|重复签到|(?:you\s+have\s+)?already\s+(?:checked|signed)[ -]?in(?:\s+today)?)[.!！。\s]*$`)
 
 func Decode(body []byte) (map[string]any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(body))
@@ -111,7 +112,7 @@ func challengeResponse(body []byte) bool {
 
 func Normalize(adapter string, resp port.Response) domain.Result {
 	if resp.Status == 400 || resp.Status == 409 {
-		if msg := responseMessage(resp, ""); alreadyPattern.MatchString(msg) || msg == "已签到" {
+		if alreadyPattern.MatchString(strings.TrimSpace(responseMessage(resp, ""))) {
 			return domain.Result{Status: domain.AlreadyDone, Message: "站点确认当前周期已签到", Evidence: "provider_already_done", HTTPStatus: resp.Status}
 		}
 	}
@@ -123,7 +124,7 @@ func Normalize(adapter string, resp port.Response) domain.Result {
 		return domain.Result{Status: domain.Unverified, Message: "响应不是有效 JSON，无法确认签到结果；请核对站点或处理验证", Evidence: "invalid_response"}
 	}
 	msg := message(payload)
-	if alreadyPattern.MatchString(msg) || strings.TrimSpace(msg) == "已签到" {
+	if alreadyPattern.MatchString(strings.TrimSpace(msg)) {
 		return domain.Result{Status: domain.AlreadyDone, Message: "站点确认当前周期已签到", Evidence: "provider_already_done"}
 	}
 	success, hasSuccess := payload["success"].(bool)

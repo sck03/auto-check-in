@@ -68,7 +68,7 @@ func (f *Factory) allocateSession(ctx context.Context, site domain.Site, c domai
 			delete(f.visible, s)
 			f.poolMu.Unlock()
 		}
-		<-f.slots
+		f.releaseSlot()
 	}
 	if visible {
 		f.poolMu.Lock()

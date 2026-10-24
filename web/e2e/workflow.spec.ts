@@ -581,7 +581,7 @@ test('桌面设置忽略保存前的旧读取，隐藏和离开页面时停止�
   await selectNav(page, '设置')
   const toggle = page.getByRole('switch', { name: '登录 Windows 后自动启动' })
   await expect(toggle).toHaveAttribute('aria-checked', 'false')
-  await page.clock.runFor(5001)
+  await page.clock.runFor(30001)
   await oldRead
   try {
     await toggle.click()
@@ -796,6 +796,82 @@ test('记录查询在筛选变更和离开页面时中止', async ({ page }) => 
     release()
   }
   expect(errors).toEqual([])
+})
+
+test('保存设置期间锁定表单，响应后可继续编辑并保存', async ({ page }) => {
+  await selectNav(page, '设置')
+  const field = page.getByRole('spinbutton', { name: '首次重试等待（秒）' })
+  await field.fill('360')
+  let release = () => {}
+  let capture = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const started = new Promise<void>((resolve) => { capture = resolve })
+  await page.route('**/api/v1/settings', async (route) => {
+    if (route.request().method() === 'PUT') { capture(); await gate }
+    await route.continue()
+  })
+  try {
+    await page.getByRole('button', { name: '保存设置', exact: true }).click()
+    await started
+    await expect(field).toBeDisabled()
+    await expect(page.getByRole('switch', { name: '启用每日计划' })).toBeDisabled()
+    release()
+    await expect(field).toBeEnabled()
+    await expect(field).toHaveValue('360')
+    await field.fill('480')
+    await page.getByRole('button', { name: '保存设置', exact: true }).click()
+    await expect(field).toBeEnabled()
+    expect((await api('/settings')).retry_base_seconds).toBe(480)
+  } finally { release() }
+})
+
+test('大量账号分页限制 DOM 数量，筛选会回到第一页', async ({ page }) => {
+  const list = Array.from({ length: 1000 }, (_, i) => ({
+    id: 'fixture-' + i, site_id: 'anyrouter', name: '分页账号' + String(i).padStart(4, '0'),
+    enabled: true, schedule: { timezone: 'Asia/Shanghai', window_start: '08:00', window_end: '09:00', retry_until: '09:00' },
+    auth: { method: 'cookie', username: '', api_user: '', has_password: false, has_session: true, has_token: false },
+    version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    next_run_at: null, last_run_at: null, last_success_at: null, last_status: 'ready', last_message: '', active_run_id: '', active_status: '',
+  }))
+  await page.route('**/api/v1/accounts', (route) => route.fulfill({ json: list }))
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  await expect(page.locator('.account-table tbody tr')).toHaveCount(50)
+  await page.getByRole('button', { name: '下一页', exact: true }).click()
+  await expect(page.getByText('分页账号0050', { exact: true })).toBeVisible()
+  await page.getByRole('checkbox', { name: '选择当前列表全部账号' }).check()
+  await expect(page.getByRole('button', { name: '执行所选 (1000)' })).toBeVisible()
+  await page.getByRole('textbox', { name: '搜索账号' }).fill('分页账号0999')
+  await expect(page.locator('.account-table tbody tr')).toHaveCount(1)
+  await expect(page.getByText('分页账号0999', { exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('离开账号页后结束迟到的登录会话', async ({ page }) => {
+  const templates = await api('/templates')
+  const schedule = templates[0].schedule
+  const account = await api('/accounts', 'POST', { name: '迟到登录', site_id: 'anyrouter', enabled: true, version: 0, schedule, credentials: { method: 'cookie' } })
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  let release = () => {}
+  let capture = () => {}
+  let cancelled = 0
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const started = new Promise<void>((resolve) => { capture = resolve })
+  await page.route('**/api/v1/accounts/' + account.id + '/login', async (route) => {
+    capture(); await gate
+    await route.fulfill({ status: 201, json: { id: 'late-fixture', account_id: account.id, width: 1200, height: 800, expires_at: new Date(Date.now() + 600000).toISOString() } })
+  })
+  await page.route('**/api/v1/sessions/late-fixture', async (route) => {
+    if (route.request().method() === 'DELETE') cancelled++
+    await route.fulfill({ status: 204 })
+  })
+  try {
+    await page.getByRole('button', { name: '浏览器登录 迟到登录', exact: true }).click()
+    await started
+    await selectNav(page, '设置')
+    release()
+    await expect.poll(() => cancelled).toBe(1)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  } finally { release() }
 })
 
 test('退出管理界面后丢弃迟到的刷新响应', async ({ page }) => {

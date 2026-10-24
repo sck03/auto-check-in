@@ -56,7 +56,7 @@ func Run(ctx context.Context, baseURL, token, dataDir, browserPath string, ready
 	alloc, closeAllocator := chromedp.NewExecAllocator(ctx, opts...)
 	defer closeAllocator()
 	window, cancel := chromedp.NewContext(alloc)
-	defer cancel()
+	defer browser.CloseProcess(window, cancel, closeAllocator)
 	if err := chromedp.Do(window); err != nil {
 		return err
 	}

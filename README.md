@@ -79,6 +79,8 @@ AgentRouter 的个人设置页是 `/console/personal`，用户信息接口仍是
 
 桌面版与服务版不能同时使用同一数据目录。再次启动桌面程序会尝试显示已有桌面实例。
 
+当前源码的补充修复、资源限制与发布验证顺序见 [优化维护记录](docs/optimization-20261024.md)。账号列表每页渲染 50 项，表单保存期间锁定输入；桌面设置每 30 秒刷新。新会话保存限制为 2 MiB / 2048 个存储项，超限需要清理站点缓存后重新保存。
+
 ## Docker
 
 ```bash
@@ -94,7 +96,7 @@ docker compose exec checkin sh -c 'cat /data/access.token'
 
 ## 构建与测试
 
-本次实际使用 **Go 1.27.2**，2026-10-15 官方发布清单标记为最新稳定版。`go.mod` 固定 `toolchain go1.27.2`。前端使用 Node 24、Vue 3、TypeScript 5.9；TypeScript 版本与当前 vue-tsc 配套锁定。
+本次实际使用 **Go 1.27.3**，用于修复证书信任问题 GO-2026-6809，并由 CI 的 govulncheck 检查可达漏洞。`go.mod` 固定 `toolchain go1.27.3`。前端使用 Node 24、Vue 3、TypeScript 5.9；TypeScript 版本与当前 vue-tsc 配套锁定。
 
 GitHub Actions 的 Linux 运行器明确固定为 **`ubuntu-26.04`**，避免 `ubuntu-latest` 迁移时自动切换环境。Docker 运行时使用独立固定的 Debian 基础镜像。
 

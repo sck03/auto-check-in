@@ -43,6 +43,12 @@ func TestSavedOAuthSessionReuseAndExpiry(t *testing.T) {
 						http.SetCookie(w, &http.Cookie{Name: "session", Value: "fresh", Path: "/"})
 						w.Header().Set("Content-Type", "application/json")
 						fmt.Fprint(w, `{"success":true,"data":{"id":7}}`)
+					case "/api/user/checkin":
+						if r.Method == http.MethodGet {
+							fmt.Fprint(w, `{"success":true,"data":{"checked_in":false}}`)
+						} else {
+							fmt.Fprint(w, `{"success":true}`)
+						}
 					default:
 						fmt.Fprint(w, `{"success":true}`)
 					}

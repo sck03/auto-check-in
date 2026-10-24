@@ -4,6 +4,7 @@ package browser
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -36,20 +37,25 @@ type Config struct {
 	IdleTimeout                   time.Duration
 }
 type Factory struct {
-	config    Config
-	slots     chan struct{}
-	lifetime  context.Context
-	shutdown  context.CancelFunc
-	poolMu    sync.Mutex
-	teardowns sync.WaitGroup
-	pool      *browserProcess
-	starting  chan struct{}
-	active    int
-	starts    int
-	idle      *time.Timer
-	closed    bool
-	visible   map[*Session]struct{}
-	cleanup   ProfileCleanup
+	config         Config
+	slots          chan struct{}
+	slotMu         sync.Mutex
+	slotWake       chan struct{}
+	lifetime       context.Context
+	shutdown       context.CancelFunc
+	poolMu         sync.Mutex
+	teardowns      sync.WaitGroup
+	pool           *browserProcess
+	starting       chan struct{}
+	active         int
+	starts         int
+	idle           *time.Timer
+	closed         bool
+	visible        map[*Session]struct{}
+	cleanup        ProfileCleanup
+	failedProfiles map[string]struct{}
+	cleanupRunning bool
+	removeProfile  func(string) error
 }
 
 func New(config Config) *Factory {
@@ -60,7 +66,7 @@ func New(config Config) *Factory {
 		config.IdleTimeout = 60 * time.Second
 	}
 	lifetime, shutdown := context.WithCancel(context.Background())
-	return &Factory{config: config, slots: make(chan struct{}, 2), lifetime: lifetime, shutdown: shutdown, visible: make(map[*Session]struct{})}
+	return &Factory{config: config, slots: make(chan struct{}, 2), slotWake: make(chan struct{}), lifetime: lifetime, shutdown: shutdown, visible: make(map[*Session]struct{}), failedProfiles: make(map[string]struct{}), removeProfile: RemoveProfile}
 }
 func (f *Factory) Available() bool {
 	if f.config.Executable == "" {
@@ -123,20 +129,8 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 	if !f.Available() {
 		return nil, port.ErrBrowserUnavailable
 	}
-	if interactive {
-		select {
-		case f.slots <- struct{}{}:
-		default:
-			return nil, port.ErrBrowserBusy
-		}
-	} else {
-		select {
-		case f.slots <- struct{}{}:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-f.lifetime.Done():
-			return nil, f.lifetime.Err()
-		}
+	if err := f.reserveSlot(ctx, interactive); err != nil {
+		return nil, err
 	}
 	// AgentRouter's identity providers may challenge headless sessions even with
 	// valid saved cookies. On desktop use the same ordinary isolated window as
@@ -144,7 +138,7 @@ func (f *Factory) open(ctx context.Context, site domain.Site, c domain.Credentia
 	visible := f.config.InteractiveVisible && (interactive || site.Adapter == "agentrouter" && (c.Method == "github" || c.Method == "linuxdo"))
 	s, err := f.allocateSession(ctx, site, c, visible)
 	if err != nil {
-		<-f.slots
+		f.releaseSlot()
 		return nil, err
 	}
 	initTimer := time.AfterFunc(30*time.Second, s.cancel)
@@ -368,6 +362,13 @@ func (s *Session) Request(ctx context.Context, method, path string, body any) (p
 	defer s.mu.Unlock()
 	return s.request(ctx, method, path, body)
 }
+
+//go:embed request.js
+var requestScript string
+
+//go:embed storage.js
+var storageScript string
+
 func (s *Session) request(ctx context.Context, method, path string, body any) (port.Response, error) {
 	var out port.Response
 	if err := domain.ValidatePath(path); err != nil {
@@ -387,12 +388,12 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 	if s.creds.Token != "" {
 		headers["Authorization"] = "Bearer " + s.creds.Token
 	}
-	args := map[string]any{"origin": s.site.BaseURL, "path": path, "method": method, "headers": headers, "body": body}
-	expression := "(async()=>{const a=" + jsonJS(args) + ";if(location.origin!==a.origin){return {status:0,body:''}};const r=await fetch(a.path,{method:a.method,headers:a.headers,credentials:'include',cache:'no-store',redirect:'error',body:a.body===null?undefined:JSON.stringify(a.body)});const body=await r.text();if(body.length>1048576)throw Error('response too large');return {status:r.status,body:body,retry:Number(r.headers.get('Retry-After'))||0}})()"
+	args := map[string]any{"origin": s.site.BaseURL, "path": path, "method": method, "headers": headers, "body": body, "limit": transport.ResponseBodyLimit}
+	expression := "(" + requestScript + ")(" + jsonJS(args) + ")"
 	var value struct {
-		Status int    `json:"status"`
-		Body   string `json:"body"`
-		Retry  int    `json:"retry"`
+		Status     int    `json:"status"`
+		Body       string `json:"body"`
+		RetryAfter string `json:"retryAfter"`
 	}
 	err := s.runSite(ctx, cdpEvaluate(expression, &value, chromedp.EvalAwaitPromise))
 	if err != nil {
@@ -404,7 +405,7 @@ func (s *Session) request(ctx context.Context, method, path string, body any) (p
 	if value.Status == 0 {
 		return out, s.loginDiagnostic(ctx, "请求 "+method+" "+path+" 时未找到本站页面，请完成授权并返回站点")
 	}
-	out = port.Response{Status: value.Status, Body: []byte(value.Body), RetryAfterSeconds: value.Retry}
+	out = port.Response{Status: value.Status, Body: []byte(value.Body), RetryAfterSeconds: transport.ParseRetryAfter(value.RetryAfter, time.Now())}
 	if path == s.site.UserInfoPath || path == s.site.LoginAPIPath {
 		if id := transport.UserID(out.Body); id != "" {
 			s.creds.APIUser = id
@@ -457,19 +458,25 @@ func (s *Session) Snapshot(ctx context.Context) (domain.Credentials, error) {
 		}
 		c.Cookies = append(c.Cookies, domain.Cookie{Name: v.Name, Value: v.Value, Domain: v.Domain, Path: v.Path, Secure: v.Secure, HTTPOnly: v.HTTPOnly, SameSite: string(v.SameSite), Expires: v.Expires})
 	}
-	state := map[string]string{}
-	expr := "(()=>{if(location.origin!==" + jsonJS(s.site.BaseURL) + ")return {};return Object.fromEntries(Object.entries(localStorage))})()"
+	var state struct {
+		Values    map[string]string `json:"values"`
+		Oversized bool              `json:"oversized"`
+	}
+	expr := "(" + storageScript + ")(" + jsonJS(s.site.BaseURL) + "," + jsonJS(domain.MaxSessionBytes) + "," + jsonJS(domain.MaxStorageEntries) + ")"
 	if err := s.runSite(ctx, cdpEvaluate(expr, &state)); err != nil {
 		return c, err
 	}
-	c.Storage = map[string]map[string]string{s.site.BaseURL: state}
+	if state.Oversized {
+		return c, domain.ErrSessionLimit
+	}
+	c.Storage = map[string]map[string]string{s.site.BaseURL: state.Values}
 	if s.nativeWindow {
 		_ = s.runSite(ctx, cdpEvaluate("navigator.userAgent", &c.UserAgent))
 	}
 	_ = s.refreshUserID(ctx)
 	c.APIUser = s.creds.APIUser
 	c.Token = s.creds.Token
-	return c, nil
+	return c, c.ValidateSession()
 }
 func (s *Session) Close() {
 	s.closeOnce.Do(func() { s.cancel(); s.cleanup() })

@@ -125,8 +125,32 @@ func (c Credentials) Validate(site Site) error {
 	if (c.Method == "github" || c.Method == "linuxdo") && site.Transport != "browser" {
 		return fmt.Errorf("OAuth 登录需要浏览器执行方式")
 	}
+	return c.ValidateSession()
+}
+
+const MaxSessionBytes = 2 << 20
+const MaxStorageEntries = 2048
+
+// ValidateSession bounds persisted browser data independently of auth method.
+// Existing oversized sessions remain readable; replacements must fit this budget.
+func (c Credentials) ValidateSession() error {
 	if len(c.Cookies) > 300 || len(c.Storage) > 4 {
-		return fmt.Errorf("会话数据超过限制")
+		return fmt.Errorf("%w（最多 300 个 Cookie、4 个来源）", ErrSessionLimit)
+	}
+	bytes := len(c.Username) + len(c.Password) + len(c.CookieHeader) + len(c.APIUser) + len(c.Token) + len(c.UserAgent)
+	for _, cookie := range c.Cookies {
+		bytes += len(cookie.Name) + len(cookie.Value) + len(cookie.Domain) + len(cookie.Path) + len(cookie.SameSite)
+	}
+	entries := 0
+	for origin, values := range c.Storage {
+		bytes += len(origin)
+		entries += len(values)
+		for key, value := range values {
+			bytes += len(key) + len(value)
+		}
+	}
+	if bytes > MaxSessionBytes || entries > MaxStorageEntries {
+		return fmt.Errorf("%w（最多 2 MiB、2048 个存储项）", ErrSessionLimit)
 	}
 	return nil
 }

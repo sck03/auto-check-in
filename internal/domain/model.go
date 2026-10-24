@@ -9,12 +9,13 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("记录不存在")
-	ErrConflict   = errors.New("记录已变更或正在使用，请刷新后重试")
-	ErrBusy       = errors.New("该账号已有进行中的任务")
-	ErrCooldown   = errors.New("该账号在当前周期已完成签到")
-	ErrDisabled   = errors.New("账号已停用")
-	ErrDailyLimit = errors.New("该账号今天已经执行过；如需再次执行请明确选择手动重试")
+	ErrNotFound     = errors.New("记录不存在")
+	ErrConflict     = errors.New("记录已变更或正在使用，请刷新后重试")
+	ErrBusy         = errors.New("该账号已有进行中的任务")
+	ErrCooldown     = errors.New("该账号在当前周期已完成签到")
+	ErrDisabled     = errors.New("账号已停用")
+	ErrDailyLimit   = errors.New("该账号今天已经执行过；如需再次执行请明确选择手动重试")
+	ErrSessionLimit = errors.New("登录会话超过大小或项数限制，请清理站点缓存后重新保存")
 )
 
 func NewID() string {
@@ -220,6 +221,14 @@ type Run struct {
 type RunFilter struct {
 	AccountID, Status, Action string
 	Limit, Offset             int
+}
+
+// ClaimOptions keeps queue admission extensible without positional filters.
+type ClaimOptions struct {
+	AllowScheduled     bool
+	Now                time.Time
+	ExcludedOrigins    []string
+	ExcludedTransports []string
 }
 type RunPage struct {
 	Items []Run `json:"items"`

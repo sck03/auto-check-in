@@ -133,7 +133,7 @@ func TestAutomaticExecutionDeadlineStopsAtWindowEnd(t *testing.T) {
 			if _, err := repo.Enqueue(ctx, account.ID, "manual", now); err != nil {
 				t.Fatal(err)
 			}
-			run, err := repo.Claim(ctx, true, now)
+			run, err := repo.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: now})
 			if err != nil || run == nil {
 				t.Fatal("claim failed", err)
 			}

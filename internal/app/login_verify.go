@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -66,6 +67,9 @@ func verifyLoginSession(ctx context.Context, entry *loginSession) (domain.Creden
 func loginSnapshot(ctx context.Context, entry *loginSession) (domain.Credentials, error) {
 	c, err := entry.session.Snapshot(ctx)
 	if err != nil {
+		if errors.Is(err, domain.ErrSessionLimit) {
+			return c, err
+		}
 		return c, fmt.Errorf("无法读取浏览器会话，请重试")
 	}
 	if entry.expectedUser != "" && c.APIUser != "" && c.APIUser != entry.expectedUser {

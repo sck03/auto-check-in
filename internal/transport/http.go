@@ -11,7 +11,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptrace"
 	"net/url"
-	"strconv"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,6 +24,13 @@ import (
 type Factory struct {
 	Browser  port.SessionFactory
 	ProxyURL string
+}
+
+func (f Factory) Capacity() port.Capacity {
+	if source, ok := f.Browser.(port.CapacitySource); ok {
+		return source.Capacity()
+	}
+	return port.Capacity{}
 }
 
 func (f Factory) Open(ctx context.Context, s domain.Site, c domain.Credentials) (port.Session, error) {
@@ -68,11 +75,19 @@ func OpenHTTP(site domain.Site, c domain.Credentials, proxy string) (*HTTPSessio
 			continue
 		}
 		h := &http.Cookie{Name: cookie.Name, Value: cookie.Value, Domain: cookie.Domain, Path: cookie.Path, Secure: cookie.Secure, HttpOnly: cookie.HTTPOnly}
+		switch cookie.SameSite {
+		case "Lax":
+			h.SameSite = http.SameSiteLaxMode
+		case "Strict":
+			h.SameSite = http.SameSiteStrictMode
+		case "None":
+			h.SameSite = http.SameSiteNoneMode
+		}
 		if cookie.Expires > 0 {
 			h.Expires = time.Unix(int64(cookie.Expires), 0)
 		}
 		jar.SetCookies(base, []*http.Cookie{h})
-		s.saved[cookieKey(cookie)] = cookie
+		s.remember(h, "/")
 	}
 	req := http.Request{Header: http.Header{"Cookie": []string{c.CookieHeader}}}
 	for _, cookie := range req.Cookies() {
@@ -86,17 +101,28 @@ func OpenHTTP(site domain.Site, c domain.Credentials, proxy string) (*HTTPSessio
 }
 
 func cookieForHost(domainName, host string) bool {
-	d := strings.TrimPrefix(domainName, ".")
-	return d == host || strings.HasSuffix(host, "."+d)
+	d := strings.TrimPrefix(strings.ToLower(domainName), ".")
+	host = strings.ToLower(host)
+	suffix, _ := publicsuffix.PublicSuffix(d)
+	return d == host || (d != "" && d != suffix && strings.HasSuffix(host, "."+d))
 }
-func cookieKey(c domain.Cookie) string { return c.Domain + "\n" + c.Path + "\n" + c.Name }
+func cookieKey(c domain.Cookie) string {
+	path := c.Path
+	if !strings.HasPrefix(path, "/") {
+		path = "/"
+	}
+	return strings.TrimPrefix(strings.ToLower(c.Domain), ".") + "\n" + path + "\n" + c.Name
+}
 func (s *HTTPSession) remember(c *http.Cookie, requestPath string) {
 	d := c.Domain
 	if d == "" {
 		d = s.base.Hostname()
 	}
+	if !cookieForHost(d, s.base.Hostname()) || c.Valid() != nil {
+		return
+	}
 	p := c.Path
-	if p == "" {
+	if !strings.HasPrefix(p, "/") {
 		p = "/"
 		if i := strings.LastIndex(requestPath, "/"); i > 0 {
 			p = requestPath[:i]
@@ -182,15 +208,9 @@ func (s *HTTPSession) Request(ctx context.Context, method, path string, body any
 	for _, cookie := range resp.Cookies() {
 		s.remember(cookie, req.URL.Path)
 	}
-	if value := resp.Header.Get("Retry-After"); value != "" {
-		if seconds, e := strconv.Atoi(value); e == nil {
-			out.RetryAfterSeconds = seconds
-		} else if t, e := http.ParseTime(value); e == nil {
-			out.RetryAfterSeconds = int(time.Until(t).Seconds())
-		}
-	}
-	out.Body, err = io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-	if err != nil || len(out.Body) > 1<<20 {
+	out.RetryAfterSeconds = ParseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	out.Body, err = io.ReadAll(io.LimitReader(resp.Body, ResponseBodyLimit+1))
+	if err != nil || len(out.Body) > ResponseBodyLimit {
 		if method != "GET" {
 			return out, port.ErrUncertain
 		}
@@ -228,6 +248,7 @@ func (s *HTTPSession) Snapshot(context.Context) (domain.Credentials, error) {
 			c.Cookies = append(c.Cookies, v)
 		}
 	}
+	sort.Slice(c.Cookies, func(i, j int) bool { return cookieKey(c.Cookies[i]) < cookieKey(c.Cookies[j]) })
 	return c, nil
 }
 func (s *HTTPSession) Close() { s.transport.CloseIdleConnections() }

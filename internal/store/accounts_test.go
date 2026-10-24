@@ -18,7 +18,7 @@ func TestAccountListKeepsOneRowAndMatchingActiveRun(t *testing.T) {
 	done, _ := s.Enqueue(ctx, "done", "manual", testNow)
 	finish(t, s, done.ID, domain.Result{Status: domain.Succeeded}, testNow)
 	running, _ := s.Enqueue(ctx, "running", "manual", testNow)
-	if run, err := s.Claim(ctx, true, testNow); err != nil || run == nil || run.ID != running.ID {
+	if run, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: testNow}); err != nil || run == nil || run.ID != running.ID {
 		t.Fatal("could not start fixture task", err)
 	}
 	queued, _ := s.Enqueue(ctx, "queued", "manual", testNow)

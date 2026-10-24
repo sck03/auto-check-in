@@ -28,7 +28,7 @@ func TestClaimSkipsExpiredWorkWithoutDelayingManualRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Claim(ctx, true, end)
+	got, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: end})
 	if err != nil || got == nil || got.ID != want.ID {
 		t.Fatalf("expired tasks stalled runnable work: %+v, %v", got, err)
 	}
@@ -58,7 +58,7 @@ func TestNextScheduledExcludesDisabledBlockedAndActiveAccounts(t *testing.T) {
 	if _, err := s.Enqueue(ctx, "running", "manual", testNow); err != nil {
 		t.Fatal(err)
 	}
-	if run, err := s.Claim(ctx, true, testNow); err != nil || run == nil {
+	if run, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: testNow}); err != nil || run == nil {
 		t.Fatal("missing running task", err)
 	}
 	if _, err := s.Enqueue(ctx, "queued", "manual", testNow); err != nil {
@@ -169,7 +169,7 @@ func BenchmarkHistoryQueries(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				if query == "idle_queue" {
-					_, err = s.Claim(ctx, true, testNow)
+					_, err = s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: testNow})
 				} else {
 					_, err = dailyAttempts(ctx, s.db, "account", testNow)
 				}
@@ -203,7 +203,7 @@ func TestQueuedAutomaticWorkExpiresAtNine(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			claimed, err := s.Claim(ctx, true, end)
+			claimed, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: end})
 			if err != nil || claimed != nil {
 				t.Fatalf("automatic work started at 09:00: %+v %v", claimed, err)
 			}

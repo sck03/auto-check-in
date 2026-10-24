@@ -156,117 +156,123 @@ async function remove() {
   </div>
   <Modal v-if="form" :title="isNew ? '添加站点' : '编辑站点'" :busy="busy" @close="form = null">
     <form id="site-form" class="form-stack" @submit.prevent="save">
-      <div v-if="error" class="notice error" role="alert">{{ error }}</div>
-      <label
-        >平台模板<select :value="form.template_id" :disabled="!!attached" @change="templateChange">
-          <optgroup v-for="group in templateGroups" :key="group.label" :label="group.label">
-            <option v-for="template in group.items" :key="template.id" :value="template.id">
-              {{ template.site.name }}
-            </option>
-          </optgroup>
-        </select></label
-      >
-      <p class="field-help">{{ currentTemplate?.description }}</p>
-      <label
-        >站点名称<input
-          v-model="form.name"
-          required
-          maxlength="60"
-          placeholder="例如：我的 New API 站点"
-      /></label>
-      <label
-        >站点地址<input
-          v-model="form.base_url"
-          type="url"
-          required
-          :disabled="!!attached"
-          placeholder="https://example.com"
-      /></label>
-      <p v-if="attached" class="field-help">
-        已有账号使用此站点。更换地址、平台模板或签到方式时，请新增站点。
-      </p>
-      <template v-if="form.template_id === 'newapi'">
+      <fieldset class="form-fields" :disabled="busy">
+        <div v-if="error" class="notice error" role="alert">{{ error }}</div>
         <label
-          >签到方式<select :value="form.adapter" :disabled="!!attached" @change="checkInChange">
-            <option value="newapi">接口签到（New API）</option>
-            <option value="browser">网页按钮签到</option>
+          >平台模板<select
+            :value="form.template_id"
+            :disabled="!!attached"
+            @change="templateChange"
+          >
+            <optgroup v-for="group in templateGroups" :key="group.label" :label="group.label">
+              <option v-for="template in group.items" :key="template.id" :value="template.id">
+                {{ template.site.name }}
+              </option>
+            </optgroup>
           </select></label
         >
-        <p class="field-help">
-          {{
-            form.adapter === 'browser'
-              ? '自动识别常见签到按钮及明确的签到结果；无法识别时可填写 CSS 选择器。'
-              : '调用签到接口并检查今日状态。WONG 使用此方式；OAuth 登录或站点验证需要浏览器执行。'
-          }}
+        <p class="field-help">{{ currentTemplate?.description }}</p>
+        <label
+          >站点名称<input
+            v-model="form.name"
+            required
+            maxlength="60"
+            placeholder="例如：我的 New API 站点"
+        /></label>
+        <label
+          >站点地址<input
+            v-model="form.base_url"
+            type="url"
+            required
+            :disabled="!!attached"
+            placeholder="https://example.com"
+        /></label>
+        <p v-if="attached" class="field-help">
+          已有账号使用此站点。更换地址、平台模板或签到方式时，请新增站点。
         </p>
-      </template>
-      <label
-        >执行方式<select v-model="form.transport" :disabled="form.adapter === 'browser'">
-          <option value="http" :disabled="hasOAuth">HTTP 接口（轻量）</option>
-          <option value="browser">浏览器（需要 Chrome / Edge / Chromium）</option>
-        </select></label
-      >
-      <p v-if="hasOAuth" class="field-help">此站点的 OAuth 账号需要浏览器执行方式。</p>
-      <details class="advanced" :open="form.adapter === 'browser'">
-        <summary>接口路径与页面选择器</summary>
-        <div class="field-grid">
-          <label>登录页面<input v-model="form.login_path" required /></label
-          ><label>登录接口<input v-model="form.login_api_path" required /></label>
+        <template v-if="form.template_id === 'newapi'">
           <label
-            >{{ form.adapter === 'browser' ? '签到页面' : '签到接口'
-            }}<input
-              v-model="form.checkin_path"
-              :disabled="['agentrouter', 'anyrouter'].includes(form.adapter)"
-          /></label>
-          <label>用户信息接口<input v-model="form.user_info_path" required /></label
-          ><label>用户 ID 请求头<input v-model="form.user_header" required /></label>
-        </div>
-        <template v-if="form.transport === 'browser'">
-          <label
-            >邮箱登录入口选择器 <span class="optional">可选</span
-            ><input v-model="form.selectors.login_entry"
-          /></label>
-          <div class="field-grid">
-            <label>用户名输入框<input v-model="form.selectors.username" /></label
-            ><label>密码输入框<input v-model="form.selectors.password" /></label>
-          </div>
-          <label>提交登录按钮<input v-model="form.selectors.submit" /></label>
-          <div class="field-grid">
-            <label>GitHub 登录按钮<input v-model="form.selectors.github" /></label
-            ><label>Linux DO 登录按钮<input v-model="form.selectors.linuxdo" /></label>
-          </div>
-        </template>
-        <template v-if="form.adapter === 'browser'">
-          <label
-            >签到按钮 CSS 选择器<input
-              v-model="form.selectors.checkin"
-              placeholder="留空自动识别，例如 #checkin-button"
-          /></label>
-          <label
-            >成功结果 CSS 选择器<input
-              v-model="form.selectors.success"
-              placeholder="留空识别签到提示，例如 .checkin-success"
-          /></label>
-          <label>已签到标识 CSS 选择器<input v-model="form.selectors.already" /></label>
+            >签到方式<select :value="form.adapter" :disabled="!!attached" @change="checkInChange">
+              <option value="newapi">接口签到（New API）</option>
+              <option value="browser">网页按钮签到</option>
+            </select></label
+          >
           <p class="field-help">
-            选择器可留空；多个候选按钮时会停止并提示。填写结果选择器后仅以配置的标识确认完成。页面按钮使用网站自己的请求，不猜测或遍历未知签到接口。
+            {{
+              form.adapter === 'browser'
+                ? '自动识别常见签到按钮及明确的签到结果；无法识别时可填写 CSS 选择器。'
+                : '调用签到接口并检查今日状态。WONG 使用此方式；OAuth 登录或站点验证需要浏览器执行。'
+            }}
           </p>
         </template>
-      </details>
-      <details class="advanced">
-        <summary>额度显示</summary>
-        <div class="field-grid">
-          <label>显示单位<input v-model="form.unit" required maxlength="16" /></label
-          ><label
-            >每单位对应额度<input
-              v-model.number="form.quota_per_unit"
-              type="number"
-              min="1"
-              required
-          /></label>
-        </div>
-        <p class="field-help">仅用于显示站点返回的金额；没有奖励字段时显示“未提供”。</p>
-      </details>
+        <label
+          >执行方式<select v-model="form.transport" :disabled="form.adapter === 'browser'">
+            <option value="http" :disabled="hasOAuth">HTTP 接口（轻量）</option>
+            <option value="browser">浏览器（需要 Chrome / Edge / Chromium）</option>
+          </select></label
+        >
+        <p v-if="hasOAuth" class="field-help">此站点的 OAuth 账号需要浏览器执行方式。</p>
+        <details class="advanced" :open="form.adapter === 'browser'">
+          <summary>接口路径与页面选择器</summary>
+          <div class="field-grid">
+            <label>登录页面<input v-model="form.login_path" required /></label
+            ><label>登录接口<input v-model="form.login_api_path" required /></label>
+            <label
+              >{{ form.adapter === 'browser' ? '签到页面' : '签到接口'
+              }}<input
+                v-model="form.checkin_path"
+                :disabled="['agentrouter', 'anyrouter'].includes(form.adapter)"
+            /></label>
+            <label>用户信息接口<input v-model="form.user_info_path" required /></label
+            ><label>用户 ID 请求头<input v-model="form.user_header" required /></label>
+          </div>
+          <template v-if="form.transport === 'browser'">
+            <label
+              >邮箱登录入口选择器 <span class="optional">可选</span
+              ><input v-model="form.selectors.login_entry"
+            /></label>
+            <div class="field-grid">
+              <label>用户名输入框<input v-model="form.selectors.username" /></label
+              ><label>密码输入框<input v-model="form.selectors.password" /></label>
+            </div>
+            <label>提交登录按钮<input v-model="form.selectors.submit" /></label>
+            <div class="field-grid">
+              <label>GitHub 登录按钮<input v-model="form.selectors.github" /></label
+              ><label>Linux DO 登录按钮<input v-model="form.selectors.linuxdo" /></label>
+            </div>
+          </template>
+          <template v-if="form.adapter === 'browser'">
+            <label
+              >签到按钮 CSS 选择器<input
+                v-model="form.selectors.checkin"
+                placeholder="留空自动识别，例如 #checkin-button"
+            /></label>
+            <label
+              >成功结果 CSS 选择器<input
+                v-model="form.selectors.success"
+                placeholder="留空识别签到提示，例如 .checkin-success"
+            /></label>
+            <label>已签到标识 CSS 选择器<input v-model="form.selectors.already" /></label>
+            <p class="field-help">
+              选择器可留空；多个候选按钮时会停止并提示。填写结果选择器后仅以配置的标识确认完成。页面按钮使用网站自己的请求，不猜测或遍历未知签到接口。
+            </p>
+          </template>
+        </details>
+        <details class="advanced">
+          <summary>额度显示</summary>
+          <div class="field-grid">
+            <label>显示单位<input v-model="form.unit" required maxlength="16" /></label
+            ><label
+              >每单位对应额度<input
+                v-model.number="form.quota_per_unit"
+                type="number"
+                min="1"
+                required
+            /></label>
+          </div>
+          <p class="field-help">仅用于显示站点返回的金额；没有奖励字段时显示“未提供”。</p>
+        </details>
+      </fieldset>
     </form>
     <template #footer
       ><button class="button secondary" :disabled="busy" @click="form = null">取消</button

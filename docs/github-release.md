@@ -4,7 +4,7 @@
 
 ## 工作流
 
-**Verify**：main 推送、Pull Request 或手动触发。验证 Windows / Linux 的 Go 与前端构建，Linux 运行竞态测试；另外构建实际容器，以非 root、只读根文件系统运行 Chromium 登录/签到/重启持久化测试。
+**Verify**：main 推送、Pull Request、手动触发或 Release 复用。验证 Windows / Linux 的 Go 与前端构建，Linux 运行全量竞态和固定版本 govulncheck；另外构建实际容器，以非 root、只读根文件系统运行 Chromium 登录/签到/重启持久化测试。复用时显式检出目标提交。
 
 **Release**：推送 `v*` 标签或在 Actions 手动输入版本标签。版本格式如 `v1.0.2`。
 
@@ -26,7 +26,9 @@ Linux tar 包通过 Go 标准库生成，服务程序固定为 `0755`，说明�
 
 Docker 内的应用声明也合并为 `/usr/share/doc/auto-check-in/THIRD_PARTY_NOTICES.md`；系统软件包自带的版权和许可文件继续保留。
 
-只有 Windows 构建和容器验证都通过后才创建 GitHub Release。镜像发布使用工作流自己的 GITHUB_TOKEN，权限仅在发布 job 开放 contents:write / packages:write，不需要在代码中保存令牌。GHCR 首次创建包的可见性受 GitHub 包设置控制；离线镜像附件也可直接下载。
+Release 先对目标提交运行完整 Verify，再构建 Windows 归档和多架构候选镜像。候选镜像仅写入唯一的 `candidate-运行号-尝试号` 标签，按 digest 分别验证 amd64 与 arm64（后者通过 QEMU），包括重启持久化；任一架构失败都不会更新正式版本或 latest。
+
+Windows、两种架构和归档校验全部通过后，publish job 将已验证 digest 推广到版本标签，稳定版同时更新 latest，再创建 GitHub Release。离线归档从相同 digest 的 amd64 镜像生成。候选标签用于失败排查，不属于正式发布入口。候选构建及推广 job 才开放 packages:write，只有 publish 开放 contents:write，均使用工作流自己的 GITHUB_TOKEN。GHCR 首次创建包的可见性受 GitHub 包设置控制。
 
 ## 触发
 
@@ -74,4 +76,4 @@ Windows 解压 ZIP 后运行 AutoCheckIn.exe。发布包未进行代码签名。
 | docker/build-push-action | v7.4.0 |
 | softprops/action-gh-release | v3.0.3 |
 
-构建工具链为 Go 1.27.2、Node 24.18.0 LTS、GoVersionInfo 1.7.0。依赖与 Actions 更新应重新核对稳定发布、更新固定版本/提交并运行验证，不使用漂移的 `@main` 或未经确认的预发布版本。
+构建工具链为 Go 1.27.3、Node 24.18.0 LTS、GoVersionInfo 1.7.0。依赖与 Actions 更新应重新核对稳定发布、更新固定版本/提交并运行验证，不使用漂移的 `@main` 或未经确认的预发布版本。

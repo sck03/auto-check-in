@@ -2,6 +2,7 @@
 .tools/
 data/
 /dist/
+/_cleanup_pending/
 artifacts/
 /待手动清理/
 web/node_modules/

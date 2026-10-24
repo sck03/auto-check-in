@@ -61,14 +61,20 @@ func visitCheckIn(ctx context.Context, session port.Session, site domain.Site, _
 }
 
 func apiCheckIn(ctx context.Context, session port.Session, site domain.Site, _ port.Response) (domain.Result, error) {
-	if site.Adapter == "newapi" && verifyStatus(ctx, session, site) {
-		return domain.Result{Status: domain.AlreadyDone, Message: "签到状态接口确认今日已签到", Evidence: "status_api"}, nil
+	if site.Adapter == "newapi" {
+		done, problem := readCheckInStatus(ctx, session, site)
+		if problem != nil {
+			return *problem, nil
+		}
+		if done {
+			return domain.Result{Status: domain.AlreadyDone, Message: "签到状态接口确认今日已签到", Evidence: "status_api"}, nil
+		}
 	}
 	response, err := session.Request(ctx, "POST", site.CheckInPath, map[string]any{})
 	if err != nil {
 		if errors.Is(err, port.ErrUncertain) && site.Adapter == "newapi" && ctx.Err() == nil {
 			verifyCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			confirmed := verifyStatus(verifyCtx, session, site)
+			confirmed := confirmedCheckIn(verifyCtx, session, site)
 			cancel()
 			if confirmed {
 				return domain.Result{Status: domain.AlreadyDone, Message: "响应丢失后，状态接口确认今日已签到", Evidence: "status_api"}, nil
@@ -77,7 +83,7 @@ func apiCheckIn(ctx context.Context, session port.Session, site domain.Site, _ p
 		return domain.Result{}, err
 	}
 	result := Normalize(site.Adapter, response)
-	if !result.Complete() && result.Status == domain.Unverified && verifyStatus(ctx, session, site) {
+	if result.Status == domain.Unverified && confirmedCheckIn(ctx, session, site) {
 		return domain.Result{Status: domain.AlreadyDone, Message: "响应不明确，状态接口确认今日已签到", Evidence: "status_api"}, nil
 	}
 	return result, nil

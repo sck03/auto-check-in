@@ -2,7 +2,7 @@ module auto-check-in
 
 go 1.27.0
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 require (
 	github.com/chromedp/cdproto v0.157.8

@@ -24,6 +24,7 @@ function toggleScheduler() {
   dirty.value = true
 }
 async function save() {
+  if (busy.value) return
   busy.value = true
   error.value = ''
   try {
@@ -86,85 +87,87 @@ async function restore() {
       @input="dirty = true"
       @change="dirty = true"
     >
-      <div class="card-heading">
-        <Icon name="clock" />
-        <h3>自动执行</h3>
-      </div>
-      <div class="setting-row">
-        <div>
-          <strong>启用每日计划</strong>
-          <p>关闭后仍可手动签到。</p>
+      <fieldset class="form-fields" :disabled="busy">
+        <div class="card-heading">
+          <Icon name="clock" />
+          <h3>自动执行</h3>
         </div>
-        <button
-          type="button"
-          class="toggle"
-          :class="{ on: form.scheduler_enabled }"
-          role="switch"
-          :aria-checked="form.scheduler_enabled"
-          aria-label="启用每日计划"
-          @click="toggleScheduler"
-        >
-          <span />
-        </button>
-      </div>
-      <div class="notice info">
-        默认每天 08:00–09:00 分账号随机开始；每天确认成功一次。临时故障允许有限补签，默认截止
-        09:00。
-      </div>
-      <div class="field-grid">
-        <label
-          >最多并行账号数<input
-            v-model.number="form.concurrency"
-            type="number"
-            min="1"
-            max="4"
-            required
-        /></label>
-        <label
-          >失败后最多重试次数<input
-            v-model.number="form.max_retries"
-            type="number"
-            min="0"
-            max="3"
-            required
-        /></label>
-        <label
-          >首次重试等待（秒）<input
-            v-model.number="form.retry_base_seconds"
-            type="number"
-            min="60"
-            max="1800"
-            required
-        /></label>
-        <label
-          >同站点最小间隔（秒）<input
-            v-model.number="form.site_gap_seconds"
-            type="number"
-            min="0"
-            max="300"
-            required
-        /></label>
-        <label
-          >单次任务超时（秒）<input
-            v-model.number="form.task_timeout_seconds"
-            type="number"
-            min="20"
-            max="600"
-            required
-        /></label>
-        <label
-          >记录保留（天）<input
-            v-model.number="form.retention_days"
-            type="number"
-            min="7"
-            max="3650"
-            required
-        /></label>
-      </div>
-      <p class="field-help">
-        下一次重试的等待时间为上一次的 3
-        倍，并略微错峰。验证码、凭据错误和结果不明会暂停，不计入自动重试。
-      </p>
+        <div class="setting-row">
+          <div>
+            <strong>启用每日计划</strong>
+            <p>关闭后仍可手动签到。</p>
+          </div>
+          <button
+            type="button"
+            class="toggle"
+            :class="{ on: form.scheduler_enabled }"
+            role="switch"
+            :aria-checked="form.scheduler_enabled"
+            aria-label="启用每日计划"
+            @click="toggleScheduler"
+          >
+            <span />
+          </button>
+        </div>
+        <div class="notice info">
+          默认每天 08:00–09:00 分账号随机开始；每天确认成功一次。临时故障允许有限补签，默认截止
+          09:00。
+        </div>
+        <div class="field-grid">
+          <label
+            >最多并行账号数<input
+              v-model.number="form.concurrency"
+              type="number"
+              min="1"
+              max="4"
+              required
+          /></label>
+          <label
+            >失败后最多重试次数<input
+              v-model.number="form.max_retries"
+              type="number"
+              min="0"
+              max="3"
+              required
+          /></label>
+          <label
+            >首次重试等待（秒）<input
+              v-model.number="form.retry_base_seconds"
+              type="number"
+              min="60"
+              max="1800"
+              required
+          /></label>
+          <label
+            >同站点最小间隔（秒）<input
+              v-model.number="form.site_gap_seconds"
+              type="number"
+              min="0"
+              max="300"
+              required
+          /></label>
+          <label
+            >单次任务超时（秒）<input
+              v-model.number="form.task_timeout_seconds"
+              type="number"
+              min="20"
+              max="600"
+              required
+          /></label>
+          <label
+            >记录保留（天）<input
+              v-model.number="form.retention_days"
+              type="number"
+              min="7"
+              max="3650"
+              required
+          /></label>
+        </div>
+        <p class="field-help">
+          下一次重试的等待时间为上一次的 3
+          倍，并略微错峰。验证码、凭据错误和结果不明会暂停，不计入自动重试。
+        </p>
+      </fieldset>
       <div class="form-actions">
         <button class="button primary" type="submit" :disabled="busy || !dirty">
           {{ busy ? '保存中…' : '保存设置' }}
@@ -187,6 +190,7 @@ async function restore() {
             maxlength="1024"
             autocomplete="new-password"
             placeholder="至少 12 个字符"
+            :disabled="backupBusy"
         /></label>
         <button
           class="button secondary full-width"

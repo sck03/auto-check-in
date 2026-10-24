@@ -44,7 +44,7 @@ try {
   let settings
   for (let i = 0; i < 60; i++) { try { settings = await api('/settings'); break } catch { await delay(1000) } }
   assert(settings, 'container HTTP service did not become ready')
-  await api('/settings', 'PUT', { ...settings, scheduler_enabled: false, site_gap_seconds: 0 })
+  await api('/settings', 'PUT', { ...settings, scheduler_enabled: false, site_gap_seconds: 0, task_timeout_seconds: 300 })
   const templates = await api('/templates')
   const template = templates.find(t => t.id === 'newapi')
   const site = await api('/sites', 'POST', { ...template.site, id: '', name: 'Container fixture', transport: 'browser',
@@ -64,8 +64,9 @@ try {
   assert.equal(run.result.reward, 250000)
   if (process.env.SMOKE_CONTAINER) {
     execFileSync('docker', ['restart', process.env.SMOKE_CONTAINER], { stdio: 'inherit' })
-    await delay(1000)
-    const accounts = await api('/accounts')
+    let accounts
+    for (let i=0;i<60;i++) { try { accounts = await api('/accounts'); break } catch { await delay(1000) } }
+    assert(accounts, 'container did not become ready after restart')
     assert.equal(accounts[0].auth.has_session, true)
     const again = await api('/runs', 'POST', { account_ids: [account.id] })
     assert.equal(again[0].accepted, false, 'successful daily run was replayed after restart')

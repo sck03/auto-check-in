@@ -86,6 +86,10 @@ const evidence: Record<string, string> = {
   configured_page_state: '页面结果标识',
   manual_session: '用户保存的登录会话',
   status_api: '签到状态接口复核',
+  invalid_status: '签到状态响应无法确认，未提交签到',
+  persistence_error: '本地结果保存失败，需要核对站点',
+  process_recovery: '上次操作中断后恢复',
+  recognized_page_state: '识别到明确的页面签到结果',
   authenticated_visit: '已登录访问（AnyRouter 规则）',
   fresh_login: '本次重新登录（AgentRouter 规则）',
   daily_spin_status: '今日免费抽奖记录确认',
@@ -114,6 +118,7 @@ const stages: Record<string, string> = {
   prepare: '执行前检查',
   open_session: '打开浏览器 / 建立连接',
   session_check: '检查已保存的登录会话',
+  status_check: '检查今日签到状态',
   login: '提交登录 / OAuth 授权',
   checkin: '执行并确认签到',
 }

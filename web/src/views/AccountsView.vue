@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { request } from '../api'
 import { scheduleLabel, time, today } from '../format'
 import type { Account, EnqueueResult, LoginInfo, Site, Template } from '../types'
@@ -20,6 +20,13 @@ const search = ref(''),
   busy = ref(false),
   loginBusy = ref('')
 const selected = ref<string[]>([])
+const selectedSet = computed(() => new Set(selected.value))
+const page = ref(0)
+const pageSize = 50
+let disposed = false
+onScopeDispose(() => {
+  disposed = true
+})
 const editing = ref<Account | null | undefined>(undefined)
 const deleting = ref<Account | null>(null),
   retrying = ref<Account | null>(null)
@@ -40,6 +47,23 @@ const filtered = computed(() =>
   }),
 )
 const hasAuth = (a: Account) => a.auth.has_password || a.auth.has_session || a.auth.has_token
+const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
+const visibleAccounts = computed(() =>
+  filtered.value.slice(page.value * pageSize, (page.value + 1) * pageSize),
+)
+watch([search, filter], () => {
+  page.value = 0
+})
+watch(pageCount, (count) => {
+  page.value = Math.min(page.value, count - 1)
+})
+watch(
+  () => props.accounts,
+  (accounts) => {
+    const existing = new Set(accounts.map((a) => a.id))
+    selected.value = selected.value.filter((id) => existing.has(id))
+  },
+)
 async function run(ids: string[] = [], retry = false) {
   busy.value = true
   error.value = ''
@@ -101,6 +125,12 @@ async function login(a: Account) {
       a.active_status === 'waiting_user'
         ? await request<LoginInfo>('/sessions/' + a.active_run_id)
         : await request<LoginInfo>('/accounts/' + a.id + '/login', 'POST')
+    if (disposed) {
+      await request('/sessions/' + info.id, 'DELETE', undefined, { timeoutMs: 12000 }).catch(
+        () => undefined,
+      )
+      return
+    }
     emit('login', info)
     emit('refresh')
   } catch (e) {
@@ -179,7 +209,7 @@ function checkAll(event: Event) {
               <input
                 type="checkbox"
                 aria-label="选择当前列表全部账号"
-                :checked="filtered.length > 0 && filtered.every((a) => selected.includes(a.id))"
+                :checked="filtered.length > 0 && filtered.every((a) => selectedSet.has(a.id))"
                 @change="checkAll"
               />
             </th>
@@ -191,7 +221,7 @@ function checkAll(event: Event) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="a in filtered" :key="a.id" :class="{ 'row-disabled': !a.enabled }">
+          <tr v-for="a in visibleAccounts" :key="a.id" :class="{ 'row-disabled': !a.enabled }">
             <td class="check-cell">
               <input
                 v-model="selected"
@@ -288,6 +318,16 @@ function checkAll(event: Event) {
           </tr>
         </tbody>
       </table>
+    </div>
+    <div v-if="pageCount > 1" class="pagination">
+      <span>共 {{ filtered.length }} 个账号 · 每页 {{ pageSize }} 个</span>
+      <div class="actions">
+        <button class="small-button" :disabled="page === 0" @click="page--">上一页</button>
+        <span>{{ page + 1 }} / {{ pageCount }}</span>
+        <button class="small-button" :disabled="page + 1 >= pageCount" @click="page++">
+          下一页
+        </button>
+      </div>
     </div>
     <div class="panel-footer">
       <span><Icon name="shield" :size="14" />账号使用独立登录会话</span

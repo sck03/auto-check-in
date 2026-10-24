@@ -43,6 +43,14 @@ type Executor interface {
 	Execute(context.Context, domain.Site, domain.Credentials) (domain.Result, *domain.Credentials)
 }
 
+// CapacitySource is optional: executors without scarce resources need no hook.
+// Changed is a broadcast captured with the snapshot; nil means no notifications.
+type Capacity struct {
+	BlockedTransports []string
+	Changed           <-chan struct{}
+}
+type CapacitySource interface{ Capacity() Capacity }
+
 type Interaction struct {
 	Type   string  `json:"type"`
 	X      float64 `json:"x"`
@@ -82,8 +90,8 @@ type Repository interface {
 	DueAccounts(context.Context, time.Time) ([]string, error)
 	NextScheduled(context.Context) (*time.Time, error)
 	Enqueue(context.Context, string, string, time.Time) (domain.Run, error)
-	// Claim skips origins reserved by the caller, without consuming their tasks.
-	Claim(context.Context, bool, time.Time, ...string) (*domain.Run, error)
+	// Claim skips unavailable origins/transports without consuming their tasks.
+	Claim(context.Context, domain.ClaimOptions) (*domain.Run, error)
 	Finish(context.Context, string, domain.Result, *domain.Credentials, domain.Settings, time.Time) error
 	CancelQueued(context.Context, string, time.Time) error
 	BeginLogin(context.Context, string, time.Time) (domain.Run, error)

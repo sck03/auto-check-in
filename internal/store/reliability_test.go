@@ -17,7 +17,7 @@ func TestResultWriteIsIdempotentAndRejectsIdentityChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Claim(ctx, true, testNow); err != nil {
+	if _, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: testNow}); err != nil {
 		t.Fatal(err)
 	}
 	c.APIUser = "wrong-user"
@@ -96,7 +96,7 @@ func TestClaimSkipsAllSitesSharingAReservedOrigin(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	run, err := s.Claim(ctx, true, testNow, "https://anyrouter.top")
+	run, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: testNow, ExcludedOrigins: []string{"https://anyrouter.top"}})
 	if err != nil || run == nil || run.AccountID != "b" {
 		t.Fatalf("unrelated origin was blocked: %+v %v", run, err)
 	}

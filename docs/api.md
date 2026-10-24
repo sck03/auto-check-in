@@ -77,6 +77,8 @@
 
 `GET /diagnostics` 增加 `engine.pending_results` / `engine.save_failures`，分别为待恢复的本地结束记录数和本次进程结果写入失败次数。`browser_pool.profile_cleanup` 包含启动回收的 `removed` / `failed` 计数。结果保存故障后的恢复只写本地记录；`persistence_error` 表示需核对站点的未知状态。
 
+`profile_cleanup.runtime_failed` 是运行期目录回收失败累计数，`pending` 是尚未回收的目录数，有限重试成功后 pending 归零。账号 Cookie 与 localStorage 的文本数据合计上限为 2 MiB，localStorage 最多 2048 项；超限拒绝新快照及备份恢复，已有凭据仍可读取。`invalid_status` 表示状态接口缺少可信的今日结果，未提交签到；对应阶段是 `status_check`。HTTP 与浏览器请求都支持数字及 HTTP 日期形式的 Retry-After。
+
 ## 执行与人工重试
 
 ```json

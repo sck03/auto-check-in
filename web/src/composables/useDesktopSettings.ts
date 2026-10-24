@@ -19,7 +19,7 @@ export function useDesktopSettings() {
   function schedule() {
     clearTimeout(timer)
     if (!lifetime.signal.aborted && document.visibilityState === 'visible')
-      timer = window.setTimeout(load, 5000)
+      timer = window.setTimeout(load, 30000)
   }
 
   async function load() {

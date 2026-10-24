@@ -14,7 +14,7 @@ if (-not $Go) {
     if ($goCommand) { $Go = $goCommand.Source }
     else { $Go = Join-Path $projectRoot '.tools/go/bin/go.exe' }
 }
-if (-not (Test-Path -LiteralPath $Go)) { throw 'Install Go 1.27.2 or supply -Go with its full path.' }
+if (-not (Test-Path -LiteralPath $Go)) { throw 'Install Go 1.27.3 or supply -Go with its full path.' }
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Command failed: $Program (exit $LASTEXITCODE)" }

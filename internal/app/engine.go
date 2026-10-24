@@ -60,7 +60,7 @@ func (e *Engine) subscription() <-chan struct{} {
 	defer e.wakeMu.Unlock()
 	return e.wake
 }
-func (e *Engine) waitForWork(ctx context.Context, wake <-chan struct{}, deadline time.Time) bool {
+func (e *Engine) waitForWork(ctx context.Context, wake <-chan struct{}, deadline time.Time, capacityWake <-chan struct{}) bool {
 	var tick <-chan time.Time
 	if !deadline.IsZero() {
 		timer := time.NewTimer(time.Until(deadline))
@@ -71,6 +71,8 @@ func (e *Engine) waitForWork(ctx context.Context, wake <-chan struct{}, deadline
 	case <-ctx.Done():
 		return false
 	case <-wake:
+		return true
+	case <-capacityWake:
 		return true
 	case <-tick:
 		return true
@@ -163,12 +165,16 @@ func (e *Engine) worker(ctx context.Context, index int) {
 			continue
 		}
 		if index >= settings.Concurrency {
-			if !e.waitForWork(ctx, wake, time.Time{}) {
+			if !e.waitForWork(ctx, wake, time.Time{}, nil) {
 				return
 			}
 			continue
 		}
-		run, origin, next, err := e.claim(ctx, settings)
+		capacity := port.Capacity{}
+		if source, ok := e.executor.(port.CapacitySource); ok {
+			capacity = source.Capacity()
+		}
+		run, origin, next, err := e.claim(ctx, settings, capacity.BlockedTransports...)
 		if err != nil {
 			if run != nil {
 				e.finishResult(pendingResult{id: run.ID, result: domain.Result{Status: domain.Failed, Message: "读取任务配置失败，未访问站点", Evidence: "configuration_error", Retryable: true}, settings: settings, at: time.Now().UTC()})
@@ -183,7 +189,7 @@ func (e *Engine) worker(ctx context.Context, index int) {
 			continue
 		}
 		if run == nil {
-			if !e.waitForWork(ctx, wake, next) {
+			if !e.waitForWork(ctx, wake, next, capacity.Changed) {
 				return
 			}
 			continue

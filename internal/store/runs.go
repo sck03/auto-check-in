@@ -120,18 +120,26 @@ func scheduleNext(ctx context.Context, tx *sql.Tx, a domain.Account, now time.Ti
 	return err
 }
 
-func (s *Store) Claim(ctx context.Context, allowScheduled bool, now time.Time, excludedOrigins ...string) (*domain.Run, error) {
+func (s *Store) Claim(ctx context.Context, options domain.ClaimOptions) (*domain.Run, error) {
+	now := options.Now
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 	eligible := ""
-	args := []any{allowScheduled}
+	args := []any{options.AllowScheduled}
+	excludedOrigins := options.ExcludedOrigins
 	if len(excludedOrigins) > 0 {
 		eligible = " AND site_id IN (SELECT id FROM sites WHERE json_extract(config,'$.base_url') NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(excludedOrigins)), ",") + "))"
 		for _, origin := range excludedOrigins {
 			args = append(args, origin)
+		}
+	}
+	if blocked := options.ExcludedTransports; len(blocked) > 0 {
+		eligible += " AND site_id IN (SELECT id FROM sites WHERE json_extract(config,'$.transport') NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(blocked)), ",") + "))"
+		for _, transport := range blocked {
+			args = append(args, transport)
 		}
 	}
 	for {

@@ -1,16 +1,80 @@
 package browser
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 type ProfileCleanup struct {
-	Removed int `json:"removed"`
-	Failed  int `json:"failed"`
+	Removed       int `json:"removed"`
+	Failed        int `json:"failed"`
+	RuntimeFailed int `json:"runtime_failed"`
+	Pending       int `json:"pending"`
+}
+
+func (f *Factory) cleanupProfile(profile string) {
+	if err := f.removeProfile(profile); err != nil {
+		slog.Warn("browser profile cleanup deferred", "profile", filepath.Base(profile), "error", err)
+		f.poolMu.Lock()
+		f.cleanup.RuntimeFailed++
+		f.failedProfiles[profile] = struct{}{}
+		if !f.closed && !f.cleanupRunning {
+			f.cleanupRunning = true
+			f.teardowns.Add(1)
+			go func() {
+				defer f.teardowns.Done()
+				for range 2 {
+					timer := time.NewTimer(2 * time.Second)
+					select {
+					case <-f.lifetime.Done():
+						timer.Stop()
+					case <-timer.C:
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					f.retryProfiles(ctx)
+					cancel()
+					f.poolMu.Lock()
+					finished := len(f.failedProfiles) == 0 || f.closed
+					if finished {
+						f.cleanupRunning = false
+					}
+					f.poolMu.Unlock()
+					if finished {
+						return
+					}
+				}
+				f.poolMu.Lock()
+				f.cleanupRunning = false
+				f.poolMu.Unlock()
+			}()
+		}
+		f.poolMu.Unlock()
+	}
+}
+
+func (f *Factory) retryProfiles(ctx context.Context) {
+	f.poolMu.Lock()
+	profiles := make([]string, 0, len(f.failedProfiles))
+	for profile := range f.failedProfiles {
+		profiles = append(profiles, profile)
+	}
+	f.poolMu.Unlock()
+	for _, profile := range profiles {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := f.removeProfile(profile); err == nil {
+			f.poolMu.Lock()
+			delete(f.failedProfiles, profile)
+			f.poolMu.Unlock()
+		}
+	}
 }
 
 var ownedProfileName = regexp.MustCompile(`^(browser-pool-|login-window-)[0-9]+$`)

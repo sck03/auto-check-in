@@ -53,9 +53,8 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 	allocator, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	root, cancel := chromedp.NewContext(allocator)
 	process := &browserProcess{ctx: root, close: func() {
-		cancel()
-		allocCancel()
-		_ = RemoveProfile(profile)
+		CloseProcess(root, cancel, allocCancel)
+		f.cleanupProfile(profile)
 	}}
 	stopRequest := context.AfterFunc(ctx, cancel)
 	stopShutdown := context.AfterFunc(f.lifetime, cancel)
@@ -72,6 +71,18 @@ func (f *Factory) startProcess(ctx context.Context, visible bool) (*browserProce
 		return nil, f.startupError(ctx, "浏览器进程初始化", err)
 	}
 	return process, nil
+}
+
+// CloseProcess gives Chromium a bounded graceful close before the cancellation
+// fallback, so cache writers can release their handles before profile removal.
+func CloseProcess(ctx context.Context, cancel, closeAllocator context.CancelFunc) {
+	if owner := chromedp.FromContext(ctx); owner != nil && owner.Browser != nil && ctx.Err() == nil {
+		deadline, done := context.WithTimeout(ctx, 2*time.Second)
+		_ = chromedp.Cancel(deadline)
+		done()
+	}
+	cancel()
+	closeAllocator()
 }
 
 // RemoveProfile is called only after the owning browser/allocator has stopped.

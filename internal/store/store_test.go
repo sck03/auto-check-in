@@ -39,7 +39,7 @@ func addAccount(t testing.TB, s *Store, id string) (domain.Account, domain.Crede
 func finish(t *testing.T, s *Store, id string, result domain.Result, now time.Time) domain.Run {
 	t.Helper()
 	ctx := context.Background()
-	r, err := s.Claim(ctx, true, now)
+	r, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: now})
 	if err != nil || r == nil {
 		t.Fatalf("claim: %v %+v", err, r)
 	}
@@ -216,7 +216,7 @@ func TestRecoveryKeepsQueueAndPausesAmbiguousWork(t *testing.T) {
 	ctx := context.Background()
 	_, _ = s.Enqueue(ctx, "a", "manual", testNow)
 	_, _ = s.Enqueue(ctx, "b", "manual", testNow.Add(time.Second))
-	r, err := s.Claim(ctx, true, testNow)
+	r, err := s.Claim(ctx, domain.ClaimOptions{AllowScheduled: true, Now: testNow})
 	if err != nil || r == nil {
 		t.Fatal(err)
 	}

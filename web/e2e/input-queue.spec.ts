@@ -18,3 +18,19 @@ test('输入失败停止后续操作，保存等待失败，核对后可继续�
   await queue.drain()
   expect(sent).toEqual(['text', 'text'])
 })
+
+test('慢输入队列有界，超过限制后停止并允许核对后恢复', async () => {
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let sent = 0
+  const queue = inputQueue(async () => { sent++; await gate })
+  const pending = Array.from({ length: 66 }, () => queue.push({ type: 'key', key: 'Tab' }).catch((e) => e))
+  release()
+  await Promise.all(pending)
+  await expect(queue.drain()).rejects.toThrow('积压')
+  expect(sent).toBeLessThanOrEqual(1)
+  await queue.reset()
+  await queue.push({ type: 'text', text: 'reviewed' })
+  await queue.drain()
+  await expect(queue.push({ type: 'text', text: '界'.repeat(2000) })).rejects.toThrow('限制')
+})

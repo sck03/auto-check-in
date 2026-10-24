@@ -76,7 +76,7 @@ try {
   assert.equal(await page.evaluate(() => navigator.webdriver), false, 'native shell should use ordinary browser defaults')
   await page.screenshot({ path: path.join(root, 'artifacts/native-windows.png') })
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: '设置' }).click()
-  await page.getByText('go1.27.2', { exact: true }).waitFor()
+  await page.getByText(metadata.go_version, { exact: true }).waitFor()
   await page.getByText('Windows 桌面', { exact: true }).first().waitFor()
   const startup = page.getByRole('switch', { name: '登录 Windows 后自动启动' })
   await startup.waitFor()
@@ -137,7 +137,7 @@ try {
   await until(async () => (await api('/settings')).scheduler_enabled !== prior, 'Tray pause action did not update scheduler')
   await api('/desktop/action', 'POST', { action: 'run_all' })
   await writeFile(path.join(root, 'artifacts/native-smoke.json'), JSON.stringify({
-    passed: true, version: metadata.version, goVersion: 'go1.27.2', display: 'Edge/Chrome application window',
+    passed: true, version: metadata.version, goVersion: metadata.go_version, display: 'Edge/Chrome application window',
     tray: { minimize: true, restore: true, closeKeepsRunning: true, menus: status.menu },
     startupSwitch: 'passed with isolated test backend; real registry adapter separately unit-tested',
     nativeLoginWindow: { opened: true, focus: true, screenshotPolling: false, cancelled: true, resourcesReleased: true },

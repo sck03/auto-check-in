@@ -15,7 +15,7 @@ type originState struct {
 // Claim and origin reservation are serialized; waiting work stays queued and
 // available worker slots can serve other origins. No storage mutex spans I/O
 // to a remote site, and idle workers wait on notifications or the nearest gap.
-func (e *Engine) claim(ctx context.Context, settings domain.Settings) (*domain.Run, string, time.Time, error) {
+func (e *Engine) claim(ctx context.Context, settings domain.Settings, blockedTransports ...string) (*domain.Run, string, time.Time, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := time.Now().UTC()
@@ -31,7 +31,7 @@ func (e *Engine) claim(ctx context.Context, settings domain.Settings) (*domain.R
 			next = state.next
 		}
 	}
-	run, err := e.repo.Claim(ctx, settings.SchedulerEnabled, now, excluded...)
+	run, err := e.repo.Claim(ctx, domain.ClaimOptions{AllowScheduled: settings.SchedulerEnabled, Now: now, ExcludedOrigins: excluded, ExcludedTransports: blockedTransports})
 	if err != nil || run == nil {
 		return run, "", next, err
 	}

@@ -20,7 +20,9 @@ type PoolStats struct {
 func (f *Factory) Stats() PoolStats {
 	f.poolMu.Lock()
 	defer f.poolMu.Unlock()
-	return PoolStats{Running: f.pool != nil || len(f.visible) > 0, Active: f.active + len(f.visible), Capacity: cap(f.slots), Starts: f.starts, IdleReleaseSeconds: int(f.config.IdleTimeout.Seconds()), NativeWindows: len(f.visible), ProfileCleanup: f.cleanup}
+	cleanup := f.cleanup
+	cleanup.Pending = len(f.failedProfiles)
+	return PoolStats{Running: f.pool != nil || len(f.visible) > 0, Active: f.active + len(f.visible), Capacity: cap(f.slots), Starts: f.starts, IdleReleaseSeconds: int(f.config.IdleTimeout.Seconds()), NativeWindows: len(f.visible), ProfileCleanup: cleanup}
 }
 func (f *Factory) Diagnostics() any { return f.Stats() }
 func (f *Factory) acquirePool(ctx context.Context) (context.Context, error) {
@@ -142,4 +144,7 @@ func (f *Factory) Close() {
 		session.Close()
 	}
 	f.teardowns.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	f.retryProfiles(ctx)
 }

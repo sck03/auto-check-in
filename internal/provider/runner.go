@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"time"
 )
 
@@ -16,6 +15,13 @@ type Runner struct {
 	Factory  port.SessionFactory
 	Registry Registry
 	Now      func() time.Time
+}
+
+func (r *Runner) Capacity() port.Capacity {
+	if source, ok := r.Factory.(port.CapacitySource); ok {
+		return source.Capacity()
+	}
+	return port.Capacity{}
 }
 
 func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credentials) (result domain.Result, updated *domain.Credentials) {
@@ -144,34 +150,6 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 		}
 	}
 	return result, nil
-}
-
-// Only New API has a known read-only check-in status endpoint. Other adapters
-// must supply their own verifier; a balance read is never a substitute.
-func verifyStatus(ctx context.Context, session port.Session, site domain.Site) bool {
-	path, err := url.Parse(site.CheckInPath)
-	if err != nil {
-		return false
-	}
-	start, _ := domain.DayBounds(time.Now())
-	query := path.Query()
-	query.Set("month", start.Format("2006-01"))
-	path.RawQuery = query.Encode()
-	response, err := session.Request(ctx, "GET", path.String(), nil)
-	if err != nil || response.Status < 200 || response.Status >= 300 {
-		return false
-	}
-	payload, err := Decode(response.Body)
-	if err != nil || payload["success"] != true {
-		return false
-	}
-	data := dataObject(payload)
-	// WONG reports today's state directly instead of New API's monthly stats.
-	if checked, ok := data["checked_in"].(bool); ok {
-		return checked
-	}
-	stats, ok := data["stats"].(map[string]any)
-	return ok && stats["checked_in_today"] == true
 }
 
 func failure(err error) domain.Result {

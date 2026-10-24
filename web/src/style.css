@@ -861,6 +861,13 @@ tbody tr:last-child td {
   flex-direction: column;
   gap: 17px;
 }
+.form-fields {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
 .form-stack .notice {
   margin-bottom: 0;
 }
@@ -1435,8 +1442,16 @@ tbody tr:last-child td {
     font-size: 23px;
   }
 }
-.tray-menu-help { margin-top: 20px; }
-.tray-menu-help ul { margin: 0; padding-left: 20px; color: var(--muted); font-size: 12px; line-height: 2; }
+.tray-menu-help {
+  margin-top: 20px;
+}
+.tray-menu-help ul {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 2;
+}
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

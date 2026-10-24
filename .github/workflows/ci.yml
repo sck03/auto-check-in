@@ -4,6 +4,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
 permissions:
   contents: read
 concurrency:
@@ -18,9 +23,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.18.0'
@@ -39,7 +46,7 @@ jobs:
           "CHECKIN_TEST_BROWSER_PATH=$browser" >> $env:GITHUB_ENV
           Write-Output "Browser regression executable: $browser"
       - if: runner.os == 'Linux'
-        run: go test -race ./internal/...
+        run: go test -race ./...
         env:
           CHECKIN_BROWSER_TEST: '1'
           CHECKIN_BROWSER_NO_SANDBOX: 'true'
@@ -48,6 +55,9 @@ jobs:
         env:
           CHECKIN_BROWSER_TEST: '1'
       - run: go vet ./...
+      - name: Check reachable Go vulnerabilities
+        if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: Build service for UI regression tests
         shell: pwsh
         run: |
@@ -70,6 +80,8 @@ jobs:
       SMOKE_CONTAINER: checkin-ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.18.0'
