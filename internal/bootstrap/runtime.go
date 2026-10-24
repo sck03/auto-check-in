@@ -74,6 +74,7 @@ type Runtime struct {
 	DataDir   string
 	Service   *app.Service
 	browsers  *browser.Factory
+	sessions  *transport.Factory
 	server    *http.Server
 	cancel    context.CancelFunc
 	closeOnce sync.Once
@@ -143,29 +144,40 @@ func Start(config Config) (rt *Runtime, err error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	browsers := browser.New(browser.Config{Executable: config.BrowserPath, TempDir: filepath.Join(dir, "temporary"), ProxyURL: config.ProxyURL, NoSandbox: config.NoSandbox, InteractiveVisible: config.Desktop})
+	defer func() {
+		if err != nil {
+			cancel()
+			browsers.Close()
+			listener.Close()
+		}
+	}()
 	if cleanupErr := browsers.ReclaimProfiles(); cleanupErr != nil {
 		slog.Warn("some browser profiles could not be reclaimed", "error", cleanupErr)
 	}
-	executor := &provider.Runner{Factory: transport.Factory{Browser: browsers, ProxyURL: config.ProxyURL}}
+	sessions, err := transport.NewFactory(browsers, config.ProxyURL)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			sessions.Close()
+		}
+	}()
+	executor := &provider.Runner{Factory: sessions}
 	service := app.New(ctx, repo, executor, browsers, config.AllowHTTP)
 	host, port, _ := net.SplitHostPort(listener.Addr().String())
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
 	}
-	rt = &Runtime{URL: "http://" + net.JoinHostPort(host, port), Token: token, DataDir: dir, Service: service, browsers: browsers, cancel: cancel, release: release, Errors: make(chan error, 1)}
+	rt = &Runtime{URL: "http://" + net.JoinHostPort(host, port), Token: token, DataDir: dir, Service: service, browsers: browsers, sessions: sessions, cancel: cancel, release: release, Errors: make(chan error, 1)}
 	rt.server = &http.Server{Handler: httpapi.New(service, token, web.Assets(), httpapi.Config{Version: buildinfo.Version, DataDir: dir, AllowedOrigins: config.AllowedOrigins, Desktop: config.Desktop, DesktopControl: desktopControl}),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	endpoint, _ := json.Marshal(map[string]string{"url": rt.URL})
 	if err = os.WriteFile(filepath.Join(dir, "endpoint.json"), endpoint, 0600); err != nil {
-		cancel()
-		listener.Close()
 		return nil, err
 	}
 	rt.stopClock, err = systemtime.Watch(service.Engine.Notify)
 	if err != nil {
-		cancel()
-		browsers.Close()
-		listener.Close()
 		return nil, fmt.Errorf("无法监听系统时间变化：%w", err)
 	}
 	service.Engine.Start(ctx)
@@ -188,6 +200,7 @@ func (rt *Runtime) Close() {
 		rt.cancel()
 		rt.Service.CloseLogins()
 		rt.Service.Engine.Wait()
+		rt.sessions.Close()
 		rt.browsers.Close()
 		_ = rt.Service.Repo.Close()
 		rt.release()

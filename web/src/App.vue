@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { initializeConnection, request, setToken } from './api'
+import { initializeConnection, onWorkspaceMutation, request, setToken } from './api'
 import { useWorkspace } from './composables/useWorkspace'
 import { time, today } from './format'
 import type { LoginInfo } from './types'
@@ -47,6 +47,7 @@ const next = computed(() => {
 let pollTimer = 0,
   toastTimer = 0
 let disposed = false
+let stopMutationWatch = () => {}
 function scheduleRefresh() {
   clearTimeout(pollTimer)
   if (disposed || booting.value || !authorized.value || document.visibilityState !== 'visible')
@@ -97,6 +98,9 @@ function logout() {
   browserInfo.value = null
 }
 onMounted(async () => {
+  stopMutationWatch = onWorkspaceMutation(() => {
+    if (authorized.value) void refresh()
+  })
   document.addEventListener('visibilitychange', visible)
   try {
     if (await initializeConnection()) await refresh()
@@ -112,6 +116,7 @@ function visible() {
   if (document.visibilityState === 'visible' && authorized.value && !booting.value) void refresh()
 }
 onBeforeUnmount(() => {
+  stopMutationWatch()
   disposed = true
   clearTimeout(pollTimer)
   clearTimeout(toastTimer)
@@ -250,7 +255,6 @@ onBeforeUnmount(() => {
           :sites="sites"
           :templates="templates"
           :browser-available="meta?.browser_available || false"
-          @refresh="refresh"
           @notify="notify"
           @login="browserInfo = $event"
         />
@@ -259,21 +263,14 @@ onBeforeUnmount(() => {
           :sites="sites"
           :templates="templates"
           :accounts="accounts"
-          @refresh="refresh"
           @notify="notify"
         />
-        <RunsView
-          v-else-if="view === 'runs'"
-          :accounts="accounts"
-          :revision="revision"
-          @refresh="refresh"
-        />
+        <RunsView v-else-if="view === 'runs'" :accounts="accounts" :revision="revision" />
         <SettingsView
           v-else-if="settings && meta"
           :settings="settings"
           :meta="meta"
           :account-count="accounts.length"
-          @refresh="refresh"
           @notify="notify"
           @logout="logout"
         />

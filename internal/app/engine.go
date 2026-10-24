@@ -90,7 +90,7 @@ func (e *Engine) enqueueDue(ctx context.Context, now time.Time) error {
 		if err == nil {
 			queued = true
 		}
-		if err != nil && !errors.Is(err, domain.ErrBusy) && !errors.Is(err, domain.ErrCooldown) && !errors.Is(err, domain.ErrConflict) && !errors.Is(err, domain.ErrDisabled) && !errors.Is(err, domain.ErrDailyLimit) {
+		if err != nil && !errors.Is(err, domain.ErrBusy) && !errors.Is(err, domain.ErrCooldown) && !errors.Is(err, domain.ErrConflict) && !errors.Is(err, domain.ErrDisabled) && !errors.Is(err, domain.ErrDailyLimit) && !errors.Is(err, domain.ErrRateLimited) {
 			return err
 		}
 	}

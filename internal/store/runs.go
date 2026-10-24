@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -36,12 +35,6 @@ func insertRun(ctx context.Context, tx *sql.Tx, r domain.Run) error {
 		r.ID, r.AccountID, r.AccountName, r.SiteName, r.Action, r.Trigger, r.Status, r.Attempt, millis(r.CreatedAt), ptrMillis(r.StartedAt), ptrMillis(r.FinishedAt), jsonText(r.Result))
 	return mapError(err)
 }
-func dailyAttempts(ctx context.Context, q queryer, id string, now time.Time) (int, error) {
-	start, end := domain.DayBounds(now)
-	var count int
-	err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE account_id=? AND action='checkin' AND started_at>=? AND started_at<? AND COALESCE(json_extract(result,'$.evidence'),'')<>'before_reset'", id, millis(start), millis(end)).Scan(&count)
-	return count, err
-}
 func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) (domain.Run, error) {
 	var r domain.Run
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -73,6 +66,12 @@ func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) 
 			return deferRun(true, domain.ErrCooldown)
 		}
 		return r, domain.ErrCooldown
+	}
+	if cooldownActive(a, now) {
+		if trigger == "scheduled" && a.NextRunAt != nil && !a.NextRunAt.After(now) {
+			return deferRun(false, cooldownError(a))
+		}
+		return r, cooldownError(a)
 	}
 	attempts, err := dailyAttempts(ctx, tx, id, now)
 	if err != nil {
@@ -115,11 +114,6 @@ func (s *Store) Enqueue(ctx context.Context, id, trigger string, now time.Time) 
 	return r, tx.Commit()
 }
 
-func scheduleNext(ctx context.Context, tx *sql.Tx, a domain.Account, now time.Time, attempted bool) error {
-	_, err := tx.ExecContext(ctx, "UPDATE accounts SET next_run_at=? WHERE id=?", millis(a.Schedule.Next(now, a.ID, attempted)), a.ID)
-	return err
-}
-
 func (s *Store) Claim(ctx context.Context, options domain.ClaimOptions) (*domain.Run, error) {
 	now := options.Now
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -127,6 +121,14 @@ func (s *Store) Claim(ctx context.Context, options domain.ClaimOptions) (*domain
 		return nil, err
 	}
 	defer tx.Rollback()
+	changed := false
+	commit := func() error {
+		err := tx.Commit()
+		if err == nil && changed {
+			s.queueRevision.Add(1)
+		}
+		return err
+	}
 	eligible := ""
 	args := []any{options.AllowScheduled}
 	excludedOrigins := options.ExcludedOrigins
@@ -150,16 +152,29 @@ WHERE status='queued' AND (? OR trigger IN ('manual','manual_retry'))
 AND EXISTS (SELECT 1 FROM accounts WHERE id=runs.account_id AND enabled=1`+eligible+`)
 ORDER BY created_at,id LIMIT 1`, args...))
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, tx.Commit()
+			return nil, commit()
 		}
 		if err != nil {
 			return nil, err
 		}
-		if pending.Trigger == "scheduled" || pending.Trigger == "scheduled_retry" {
-			a, e := getAccount(ctx, tx, pending.AccountID)
-			if e != nil {
-				return nil, e
+		a, err := getAccount(ctx, tx, pending.AccountID)
+		if err != nil {
+			return nil, err
+		}
+		if cooldownActive(a, now) {
+			changed = true
+			result := domain.Result{Status: domain.Cancelled, Message: cooldownError(a).Error(), Evidence: "rate_limit_deferred"}
+			if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='cancelled',finished_at=?,result=? WHERE id=?", millis(now), jsonText(result), pending.ID); err != nil {
+				return nil, err
 			}
+			if a.NextRunAt != nil {
+				if err = scheduleNext(ctx, tx, a, now, false); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		if pending.Trigger == "scheduled" || pending.Trigger == "scheduled_retry" {
 			attempts, e := dailyAttempts(ctx, tx, a.ID, now)
 			if e != nil {
 				return nil, e
@@ -173,6 +188,7 @@ ORDER BY created_at,id LIMIT 1`, args...))
 				allowed = attempts > 0 && attempts <= settings.MaxRetries && a.LastStatus == domain.Failed && a.Schedule.WithinRetryWindow(now)
 			}
 			if !allowed || a.Schedule.InCompletedCycle(now, a.LastSuccessAt) {
+				changed = true
 				result := domain.Result{Status: domain.Cancelled, Message: "排队计划已过期，按每日窗口重新安排", Evidence: "schedule_deferred"}
 				if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='cancelled',finished_at=?,result=? WHERE id=?", millis(now), jsonText(result), pending.ID); err != nil {
 					return nil, err
@@ -186,7 +202,7 @@ ORDER BY created_at,id LIMIT 1`, args...))
 		if _, err = tx.ExecContext(ctx, "UPDATE runs SET status='running',started_at=? WHERE id=? AND status='queued'", millis(now), pending.ID); err != nil {
 			return nil, err
 		}
-		if err = tx.Commit(); err != nil {
+		if err = commit(); err != nil {
 			return nil, err
 		}
 		started := time.UnixMilli(millis(now)).UTC()
@@ -220,51 +236,18 @@ func (s *Store) Finish(ctx context.Context, id string, result domain.Result, c *
 	if err != nil {
 		return err
 	}
-	next := a.Schedule.Next(now, a.ID, true)
-	nextMillis := millis(next)
-	if result.Evidence == "before_reset" {
-		day, _ := domain.DayBounds(now)
-		next = a.Schedule.ScheduledTime(now, a.ID)
-		if reset := day.Add(8 * time.Hour); next.Before(reset) {
-			next = reset
-		}
-		nextMillis = millis(next)
-	}
+	nextMillis, notBefore := resultSchedule(a, r, result, settings, now)
 	lastSuccess := ptrMillis(a.LastSuccessAt)
 	if result.Complete() {
 		lastSuccess = millis(now)
-	}
-	if result.BlocksSchedule() {
-		nextMillis = 0
-	}
-	if result.Status == domain.Failed && result.Retryable && r.Attempt <= settings.MaxRetries {
-		delay := settings.RetryBaseSeconds
-		for attempt := 1; attempt < r.Attempt; attempt++ {
-			delay *= 3
-		}
-		if result.RetryAfterSeconds > delay {
-			delay = result.RetryAfterSeconds
-		}
-		if delay > 86400 {
-			delay = 86400
-		}
-		hash := sha256.Sum256([]byte(r.ID))
-		start, end := a.Schedule.RetryBounds(now)
-		retryAt := now.Add(time.Duration(delay+int(hash[0])%31) * time.Second)
-		if retryAt.Before(start) {
-			retryAt = start.Add(time.Duration(int(hash[0])%31) * time.Second)
-		}
-		if retryAt.Before(end) {
-			nextMillis = millis(retryAt)
-		}
 	}
 	if c != nil {
 		if err = s.updateCredentials(ctx, tx, a.ID, *c, now); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE accounts SET next_run_at=?,last_run_at=?,last_success_at=?,last_status=?,last_message=? WHERE id=?`,
-		nextMillis, millis(now), lastSuccess, result.Status, result.Message, a.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE accounts SET next_run_at=?,last_run_at=?,last_success_at=?,last_status=?,last_message=?,retry_not_before=? WHERE id=?`,
+		nextMillis, millis(now), lastSuccess, result.Status, result.Message, notBefore, a.ID); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE runs SET status=?,finished_at=?,result=? WHERE id=?", result.Status, millis(now), jsonText(result), id); err != nil {
@@ -355,7 +338,7 @@ func (s *Store) FinishLogin(ctx context.Context, id string, c *domain.Credential
 		if e != nil {
 			return e
 		}
-		next := a.Schedule.Next(now, a.ID, attempts > 0)
+		next := a.RespectCooldown(a.Schedule.Next(now, a.ID, attempts > 0))
 		nextAt, status, message := millis(next), "ready", ""
 		if a.LastStatus == domain.Unverified || a.LastStatus == domain.Interrupted {
 			nextAt = 0

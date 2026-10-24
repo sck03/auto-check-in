@@ -112,6 +112,14 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 		}
 	}
 	var login port.Response
+	if site.Adapter == "browser" && c.Method != "cookie" {
+		if page, ok := session.(port.PageSession); ok {
+			valid, err = page.PreparePageCheckIn(ctx)
+			if err != nil {
+				return failure(err), nil
+			}
+		}
+	}
 	if c.Method != "cookie" && !valid {
 		stage = "login"
 		login, err = session.Login(ctx)
@@ -120,6 +128,9 @@ func (r *Runner) Execute(ctx context.Context, site domain.Site, c domain.Credent
 		}
 		if f := loginFailure(login); f != nil {
 			return *f, nil
+		}
+		if site.Adapter == "browser" && c.APIUser != "" && transport.UserID(login.Body) != "" && !Authenticated(login, c.APIUser) {
+			return identityFailure(login), nil
 		}
 		if site.Adapter != "browser" && site.Adapter != "x666" {
 			identity := login

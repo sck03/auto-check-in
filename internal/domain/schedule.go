@@ -108,6 +108,27 @@ func (s Schedule) Next(now time.Time, accountID string, consumed bool) time.Time
 	}
 	return at
 }
+
+// AtOrAfter projects a lower bound into a first-attempt window. When today's
+// random second has already passed, the remaining window is still usable.
+func (s Schedule) AtOrAfter(at time.Time, accountID string) time.Time {
+	random := s.ScheduledTime(at, accountID)
+	if !random.Before(at) {
+		return random
+	}
+	if s.WithinWindow(at) {
+		return at.UTC()
+	}
+	_, tomorrow := DayBounds(at)
+	return s.ScheduledTime(tomorrow, accountID)
+}
+
+func (a Account) RespectCooldown(planned time.Time) time.Time {
+	if a.RetryNotBefore != nil && planned.Before(*a.RetryNotBefore) {
+		return a.Schedule.AtOrAfter(*a.RetryNotBefore, a.ID)
+	}
+	return planned
+}
 func (s Schedule) InCompletedCycle(now time.Time, last *time.Time) bool {
 	if last == nil {
 		return false

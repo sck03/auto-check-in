@@ -1,6 +1,7 @@
 package security
 
 import (
+	"auto-check-in/internal/domain"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/pbkdf2"
@@ -136,13 +137,18 @@ type backupEnvelope struct {
 	Payload string `json:"payload"`
 }
 
-const maxBackupBytes = 32 << 20
+func ValidateBackupPassword(password string) error {
+	if len(password) < 12 || len(password) > 1024 {
+		return errors.New("备份口令须为 12 至 1024 个字节")
+	}
+	return nil
+}
 
 func EncryptBackup(plain []byte, password string) ([]byte, error) {
-	if len(password) < 12 || len(password) > 1024 {
-		return nil, errors.New("备份口令须为 12 至 1024 个字节")
+	if err := ValidateBackupPassword(password); err != nil {
+		return nil, err
 	}
-	if len(plain) > maxBackupBytes {
+	if len(plain) > domain.MaxBackupBytes {
 		return nil, errors.New("备份超出 32 MiB 限制，请先清理历史记录")
 	}
 	salt := make([]byte, 16)
@@ -161,7 +167,7 @@ func EncryptBackup(plain []byte, password string) ([]byte, error) {
 }
 
 func DecryptBackup(archive []byte, password string) ([]byte, error) {
-	if len(archive) > 48<<20 || len(password) > 1024 {
+	if len(archive) > domain.MaxBackupArchiveBytes || len(password) > 1024 {
 		return nil, errors.New("备份或口令超出限制")
 	}
 	var env backupEnvelope
@@ -173,7 +179,7 @@ func DecryptBackup(archive []byte, password string) ([]byte, error) {
 		return nil, errors.New("无效的备份盐")
 	}
 	payload, err := base64.StdEncoding.DecodeString(env.Payload)
-	if err != nil || len(payload) > maxBackupBytes+64 {
+	if err != nil || len(payload) > domain.MaxBackupBytes+64 {
 		return nil, errors.New("无效的备份内容")
 	}
 	v, err := backupVault(password, salt)

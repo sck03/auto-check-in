@@ -35,8 +35,8 @@ test('LinuxDO 真实允许链接无需表单，按应用信息和官方地址确
     .evaluate((el) => el.setAttribute('href', 'https://example.org/oauth2/approve/fixture'))
   expect(await page.evaluate(driver('linuxdo') + ".inspect('consent')")).toBe('')
 })
-function driver(method: string, selectors = defaults, waitForStatus = false) {
-  return `(${script})(${JSON.stringify(selectors)},${JSON.stringify(method)},${JSON.stringify(origin)},'/login',${waitForStatus})`
+function driver(method: string, selectors = defaults, waitForStatus = false, loginPath = '/login') {
+  return `(${script})(${JSON.stringify(selectors)},${JSON.stringify(method)},${JSON.stringify(origin)},${JSON.stringify(loginPath)},${waitForStatus})`
 }
 async function load(page: Page, url: string, html: string) {
   await page.route('**/*', (route) =>
@@ -44,6 +44,21 @@ async function load(page: Page, url: string, html: string) {
   )
   await page.goto(url)
 }
+
+test('带查询参数的登录路径按 pathname 识别入口和授权返回', async ({ page }) => {
+  await load(
+    page,
+    origin + '/login?redirect=%2Fconsole',
+    '<button data-provider="github" onclick="document.body.dataset.clicked=\'yes\'">使用 GitHub 继续</button>',
+  )
+  const expression = driver('github', defaults, false, '/login?redirect=%2Fconsole')
+  expect(await page.evaluate(expression + ".inspect('entry')")).toBe('ready')
+  expect(await page.evaluate(expression + ".inspect('consent')")).toBe('')
+  expect(await page.evaluate(expression + ".click('entry')")).toBe('clicked')
+  expect(await page.evaluate('document.body.dataset.clicked')).toBe('yes')
+  await page.goto(origin + '/console')
+  expect(await page.evaluate(expression + ".inspect('consent')")).toBe('returned')
+})
 
 for (const method of ['github', 'linuxdo']) {
   test(`AgentRouter ${method} 等待配置就绪后再点击可用按钮`, async ({ page }) => {

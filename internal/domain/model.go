@@ -15,6 +15,7 @@ var (
 	ErrCooldown     = errors.New("该账号在当前周期已完成签到")
 	ErrDisabled     = errors.New("账号已停用")
 	ErrDailyLimit   = errors.New("该账号今天已经执行过；如需再次执行请明确选择手动重试")
+	ErrRateLimited  = errors.New("站点要求等待，暂时不能再次签到")
 	ErrSessionLimit = errors.New("登录会话超过大小或项数限制，请清理站点缓存后重新保存")
 )
 
@@ -142,22 +143,23 @@ func (c Credentials) Summary() AuthSummary {
 }
 
 type Account struct {
-	ID            string      `json:"id"`
-	SiteID        string      `json:"site_id"`
-	Name          string      `json:"name"`
-	Enabled       bool        `json:"enabled"`
-	Schedule      Schedule    `json:"schedule"`
-	Auth          AuthSummary `json:"auth"`
-	Version       int64       `json:"version"`
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
-	NextRunAt     *time.Time  `json:"next_run_at"`
-	LastRunAt     *time.Time  `json:"last_run_at"`
-	LastSuccessAt *time.Time  `json:"last_success_at"`
-	LastStatus    string      `json:"last_status"`
-	LastMessage   string      `json:"last_message"`
-	ActiveRunID   string      `json:"active_run_id"`
-	ActiveStatus  string      `json:"active_status"`
+	ID             string      `json:"id"`
+	SiteID         string      `json:"site_id"`
+	Name           string      `json:"name"`
+	Enabled        bool        `json:"enabled"`
+	Schedule       Schedule    `json:"schedule"`
+	Auth           AuthSummary `json:"auth"`
+	Version        int64       `json:"version"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	NextRunAt      *time.Time  `json:"next_run_at"`
+	RetryNotBefore *time.Time  `json:"retry_not_before"`
+	LastRunAt      *time.Time  `json:"last_run_at"`
+	LastSuccessAt  *time.Time  `json:"last_success_at"`
+	LastStatus     string      `json:"last_status"`
+	LastMessage    string      `json:"last_message"`
+	ActiveRunID    string      `json:"active_run_id"`
+	ActiveStatus   string      `json:"active_status"`
 }
 
 type AccountInput struct {

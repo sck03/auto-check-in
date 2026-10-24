@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"auto-check-in/internal/domain"
+	"auto-check-in/internal/port"
 )
 
 type originState struct {
@@ -31,7 +32,15 @@ func (e *Engine) claim(ctx context.Context, settings domain.Settings, blockedTra
 			next = state.next
 		}
 	}
+	var revision uint64
+	changes, observesChanges := e.repo.(port.QueueRevisionSource)
+	if observesChanges {
+		revision = changes.QueueRevision()
+	}
 	run, err := e.repo.Claim(ctx, domain.ClaimOptions{AllowScheduled: settings.SchedulerEnabled, Now: now, ExcludedOrigins: excluded, ExcludedTransports: blockedTransports})
+	if observesChanges && changes.QueueRevision() != revision {
+		e.Notify()
+	}
 	if err != nil || run == nil {
 		return run, "", next, err
 	}

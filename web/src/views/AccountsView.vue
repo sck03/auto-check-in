@@ -13,7 +13,7 @@ const props = defineProps<{
   templates: Template[]
   browserAvailable: boolean
 }>()
-const emit = defineEmits<{ refresh: []; notify: [string]; login: [LoginInfo] }>()
+const emit = defineEmits<{ notify: [string]; login: [LoginInfo] }>()
 const search = ref(''),
   filter = ref('all'),
   error = ref(''),
@@ -33,11 +33,13 @@ const deleting = ref<Account | null>(null),
 const siteMap = computed(() => new Map(props.sites.map((s) => [s.id, s])))
 const attention = (a: Account) =>
   ['needs_attention', 'unverified', 'interrupted'].includes(a.last_status)
+const attentionCount = computed(() => props.accounts.filter(attention).length)
+const searchTerm = computed(() => search.value.toLowerCase())
 const filtered = computed(() =>
   props.accounts.filter((a) => {
     const matches = (a.name + ' ' + (siteMap.value.get(a.site_id)?.name || ''))
       .toLowerCase()
-      .includes(search.value.toLowerCase())
+      .includes(searchTerm.value)
     return (
       matches &&
       (filter.value === 'all' ||
@@ -77,7 +79,6 @@ async function run(ids: string[] = [], retry = false) {
         : result[0]?.message || '没有可执行的账号',
     )
     retrying.value = null
-    emit('refresh')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '执行失败'
   } finally {
@@ -97,7 +98,6 @@ async function toggle(a: Account) {
       schedule: a.schedule,
       version: a.version,
     })
-    emit('refresh')
   } catch (e) {
     error.value = (e as Error).message
   }
@@ -108,7 +108,6 @@ async function remove() {
   try {
     await request('/accounts/' + deleting.value.id, 'DELETE')
     deleting.value = null
-    emit('refresh')
     emit('notify', '账号已删除，历史记录已保留')
   } catch (e) {
     error.value = (e as Error).message
@@ -132,17 +131,14 @@ async function login(a: Account) {
       return
     }
     emit('login', info)
-    emit('refresh')
   } catch (e) {
     error.value = (e as Error).message
-    emit('refresh')
   } finally {
     loginBusy.value = ''
   }
 }
 function accountSaved() {
   editing.value = undefined
-  emit('refresh')
   emit('notify', '账号已保存')
 }
 function checkAll(event: Event) {
@@ -181,9 +177,7 @@ function checkAll(event: Event) {
           已启用</button
         ><button :class="{ active: filter === 'attention' }" @click="filter = 'attention'">
           需要处理
-          <span v-if="accounts.filter(attention).length">{{
-            accounts.filter(attention).length
-          }}</span>
+          <span v-if="attentionCount">{{ attentionCount }}</span>
         </button>
       </div>
       <label class="search"

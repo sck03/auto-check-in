@@ -21,54 +21,31 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-type Factory struct {
-	Browser  port.SessionFactory
-	ProxyURL string
-}
-
-func (f Factory) Capacity() port.Capacity {
-	if source, ok := f.Browser.(port.CapacitySource); ok {
-		return source.Capacity()
-	}
-	return port.Capacity{}
-}
-
-func (f Factory) Open(ctx context.Context, s domain.Site, c domain.Credentials) (port.Session, error) {
-	if s.Transport == "browser" {
-		if f.Browser == nil {
-			return nil, port.ErrBrowserUnavailable
-		}
-		return f.Browser.Open(ctx, s, c)
-	}
-	return OpenHTTP(s, c, f.ProxyURL)
-}
-
 type HTTPSession struct {
-	site      domain.Site
-	creds     domain.Credentials
-	base      *url.URL
-	client    *http.Client
-	transport *http.Transport
-	saved     map[string]domain.Cookie
+	site          domain.Site
+	creds         domain.Credentials
+	base          *url.URL
+	client        *http.Client
+	transport     *http.Transport
+	ownsTransport bool
+	saved         map[string]domain.Cookie
 }
 
 func OpenHTTP(site domain.Site, c domain.Credentials, proxy string) (*HTTPSession, error) {
+	tr, err := newHTTPTransport(proxy)
+	if err != nil {
+		return nil, err
+	}
+	return openHTTP(site, c, tr, true)
+}
+
+func openHTTP(site domain.Site, c domain.Credentials, tr *http.Transport, owned bool) (*HTTPSession, error) {
 	base, err := url.Parse(site.BaseURL)
 	if err != nil {
 		return nil, err
 	}
 	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.Proxy = nil
-	tr.ResponseHeaderTimeout = 30 * time.Second
-	if proxy != "" {
-		p, e := url.Parse(proxy)
-		if e != nil {
-			return nil, e
-		}
-		tr.Proxy = http.ProxyURL(p)
-	}
-	s := &HTTPSession{site: site, creds: c, base: base, transport: tr, saved: map[string]domain.Cookie{}}
+	s := &HTTPSession{site: site, creds: c, base: base, transport: tr, ownsTransport: owned, saved: map[string]domain.Cookie{}}
 	s.client = &http.Client{Transport: tr, Jar: jar, Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	for _, cookie := range c.Cookies {
 		if !cookieForHost(cookie.Domain, base.Hostname()) {
@@ -251,7 +228,11 @@ func (s *HTTPSession) Snapshot(context.Context) (domain.Credentials, error) {
 	sort.Slice(c.Cookies, func(i, j int) bool { return cookieKey(c.Cookies[i]) < cookieKey(c.Cookies[j]) })
 	return c, nil
 }
-func (s *HTTPSession) Close() { s.transport.CloseIdleConnections() }
+func (s *HTTPSession) Close() {
+	if s.ownsTransport {
+		s.transport.CloseIdleConnections()
+	}
+}
 
 // UserID only accepts an authenticated user response, never arbitrary page text.
 func UserID(body []byte) string {

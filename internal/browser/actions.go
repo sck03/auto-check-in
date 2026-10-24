@@ -43,10 +43,26 @@ drained:
 	args := map[string]any{"selectors": s.site.Selectors, "username": s.creds.Username, "password": s.creds.Password}
 	var clicked bool
 	if s.creds.Method == "password" {
-		// A normal email-login entry may precede the actual form.
-		poll := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "if(find(a.selectors.username)||find(userFallback))return true;const entry=find(a.selectors.login_entry)||[...document.querySelectorAll('button,a')].find(e=>visible(e)&&/邮箱或用户名|使用.*邮箱|Email or Username|Sign in with Email/i.test(e.textContent));if(entry&&!entry.dataset.checkinOpened){entry.dataset.checkinOpened='1';entry.click()}return false})()"
-		if err := s.run(ctx, cdpPoll(poll, nil, chromedp.WithPollingTimeout(20*time.Second))); err != nil {
+		// Reads may resume across navigation. Opening the email entry remains a
+		// separate one-shot click and is never replayed by a polling predicate.
+		entry := "find(a.selectors.login_entry)||[...document.querySelectorAll('button,a')].find(e=>visible(e)&&/邮箱或用户名|使用.*邮箱|Email or Username|Sign in with Email/i.test(e.textContent))"
+		poll := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "if(find(a.selectors.username)||find(userFallback))return 'ready';return (" + entry + ")?'entry':''})()"
+		var state string
+		if err := s.pollPage(ctx, poll, &state, 20*time.Second); err != nil {
 			return port.Response{}, s.loginDiagnostic(ctx, "未找到可见的用户名输入框，请检查登录页面和选择器")
+		}
+		if state == "entry" {
+			expr := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "const entry=" + entry + ";if(!entry)return false;entry.click();return true})()"
+			if err := s.run(ctx, cdpEvaluate(expr, &clicked)); err != nil {
+				return port.Response{}, port.ErrUncertain
+			}
+			if !clicked {
+				return port.Response{}, s.loginDiagnostic(ctx, "邮箱登录入口已消失，请检查页面")
+			}
+			form := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "return !!(find(a.selectors.username)||find(userFallback))})()"
+			if err := s.pollPage(ctx, form, nil, 20*time.Second); err != nil {
+				return port.Response{}, s.loginDiagnostic(ctx, "邮箱登录入口打开后未发现用户名输入框")
+			}
 		}
 		expr := "(()=>{const a=" + jsonJS(args) + ";" + loginDOMHelpers + "const u=find(a.selectors.username)||find(userFallback),p=find(a.selectors.password)||find('input[type=password]');if(!u||!p)return false;const set=(el,value)=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}))};set(u,a.username);set(p,a.password);const submit=find(a.selectors.submit)||[...document.querySelectorAll('button')].find(e=>visible(e)&&/^(登录|登 录|登入|Sign in|Log in|Login)$/i.test(e.textContent.trim()));if(!submit||submit.disabled)return false;submit.click();return true})()"
 		if err := s.run(ctx, cdpEvaluate(expr, &clicked)); err != nil || !clicked {

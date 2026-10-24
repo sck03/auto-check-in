@@ -62,7 +62,8 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match")
+			w.Header().Set("Access-Control-Expose-Headers", "ETag")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		}
 		if r.Method == "OPTIONS" {
@@ -125,7 +126,7 @@ func fail(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, 404, "not_found", err.Error())
-	case errors.Is(err, domain.ErrBusy), errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrCooldown), errors.Is(err, domain.ErrDisabled), errors.Is(err, domain.ErrDailyLimit):
+	case errors.Is(err, domain.ErrBusy), errors.Is(err, domain.ErrConflict), errors.Is(err, domain.ErrCooldown), errors.Is(err, domain.ErrDisabled), errors.Is(err, domain.ErrDailyLimit), errors.Is(err, domain.ErrRateLimited):
 		writeError(w, 409, "conflict", err.Error())
 	case errors.Is(err, port.ErrBrowserUnavailable), errors.Is(err, port.ErrBrowserBusy):
 		writeError(w, 503, "browser_unavailable", err.Error())
@@ -199,7 +200,7 @@ func (a *API) routes() {
 			fail(w, e)
 			return
 		}
-		respond(w, 200, v)
+		respondSnapshot(w, r, v, "")
 	})
 	m.HandleFunc("POST /api/v1/sites", func(w http.ResponseWriter, r *http.Request) { a.saveSite(w, r, "") })
 	m.HandleFunc("PUT /api/v1/sites/{id}", func(w http.ResponseWriter, r *http.Request) { a.saveSite(w, r, r.PathValue("id")) })
@@ -216,7 +217,8 @@ func (a *API) routes() {
 			fail(w, e)
 			return
 		}
-		respond(w, 200, v)
+		day, _ := domain.DayBounds(time.Now())
+		respondSnapshot(w, r, v, day.Format("2006-01-02"))
 	})
 	m.HandleFunc("POST /api/v1/accounts", func(w http.ResponseWriter, r *http.Request) { a.saveAccount(w, r, "") })
 	m.HandleFunc("PUT /api/v1/accounts/{id}", func(w http.ResponseWriter, r *http.Request) { a.saveAccount(w, r, r.PathValue("id")) })
@@ -234,7 +236,7 @@ func (a *API) routes() {
 			fail(w, e)
 			return
 		}
-		respond(w, 200, v)
+		respondSnapshot(w, r, v, "")
 	})
 	m.HandleFunc("PUT /api/v1/settings", func(w http.ResponseWriter, r *http.Request) {
 		var v domain.Settings

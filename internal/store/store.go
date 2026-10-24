@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"auto-check-in/internal/domain"
@@ -18,16 +19,18 @@ import (
 )
 
 type Store struct {
-	db    *sql.DB
-	vault *security.Vault
+	db            *sql.DB
+	vault         *security.Vault
+	queueRevision atomic.Uint64
 }
+
+func (s *Store) QueueRevision() uint64 { return s.queueRevision.Load() }
+
 type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 type scanner interface{ Scan(...any) error }
-
-const schemaVersion = 5
 
 func Open(path string, vault *security.Vault) (*Store, error) {
 	absolute, err := filepath.Abs(path)
@@ -61,79 +64,6 @@ func Open(path string, vault *security.Vault) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
-
-func (s *Store) initialize() error {
-	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version == schemaVersion {
-		return nil
-	}
-	if version != 0 {
-		return fmt.Errorf("数据库版本 %d 与当前版本不兼容，请使用新的空数据目录重新配置", version)
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = createSchema(tx); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func createSchema(tx *sql.Tx) error {
-	_, err := tx.Exec(`
-CREATE TABLE sites(id TEXT PRIMARY KEY, config TEXT NOT NULL);
-CREATE TABLE accounts(
- id TEXT PRIMARY KEY, site_id TEXT NOT NULL REFERENCES sites(id), name TEXT NOT NULL,
- enabled INTEGER NOT NULL, schedule TEXT NOT NULL, auth TEXT NOT NULL, secret BLOB NOT NULL,
- identity TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL,
- created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, next_run_at INTEGER NOT NULL DEFAULT 0,
- last_run_at INTEGER NOT NULL DEFAULT 0, last_success_at INTEGER NOT NULL DEFAULT 0,
- last_status TEXT NOT NULL DEFAULT 'ready', last_message TEXT NOT NULL DEFAULT ''
-);
-CREATE UNIQUE INDEX account_identity ON accounts(site_id,identity) WHERE identity<>'';
-CREATE INDEX due_accounts ON accounts(enabled,next_run_at);
-CREATE INDEX site_accounts ON accounts(site_id);
-CREATE TABLE runs(
- id TEXT PRIMARY KEY, account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL,
- account_name TEXT NOT NULL, site_name TEXT NOT NULL, action TEXT NOT NULL,
- trigger TEXT NOT NULL, status TEXT NOT NULL, attempt INTEGER NOT NULL,
- created_at INTEGER NOT NULL, started_at INTEGER NOT NULL DEFAULT 0,
- finished_at INTEGER NOT NULL DEFAULT 0, result TEXT NOT NULL DEFAULT '{}'
-);
-CREATE UNIQUE INDEX one_active_run ON runs(account_id) WHERE status IN ('queued','running','waiting_user');
-CREATE INDEX run_history ON runs(created_at DESC,id DESC);
-CREATE INDEX account_history ON runs(account_id,created_at DESC);
-CREATE INDEX queued_runs ON runs(created_at,id) WHERE status='queued';
-CREATE INDEX daily_checkin_attempts ON runs(account_id,started_at) WHERE action='checkin';
-CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), config TEXT NOT NULL);`)
-	if err != nil {
-		return err
-	}
-	settings := domain.DefaultSettings()
-	settings.Version = 1
-	if _, err = tx.Exec("INSERT INTO settings VALUES(1,?)", jsonText(settings)); err != nil {
-		return err
-	}
-	for _, t := range domain.Templates() {
-		site := t.Site
-		if site.ID == "" {
-			continue
-		}
-		site.Version = 1
-		if _, err = tx.Exec("INSERT INTO sites(id,config) VALUES(?,?)", site.ID, jsonText(site)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func jsonText(v any) string {
 	b, err := json.Marshal(v)
@@ -209,6 +139,13 @@ func (s *Store) SaveSite(ctx context.Context, site domain.Site) (domain.Site, er
 	if errors.Is(err, domain.ErrNotFound) {
 		if site.Version != 0 {
 			return site, domain.ErrConflict
+		}
+		var count int
+		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM sites").Scan(&count); err != nil {
+			return site, err
+		}
+		if err = domain.ValidateBackupCounts(count+1, 0, 0); err != nil {
+			return site, err
 		}
 		site.Version = 1
 		_, err = tx.ExecContext(ctx, "INSERT INTO sites(id,config) VALUES(?,?)", site.ID, jsonText(site))

@@ -5,7 +5,7 @@ import type { Account, Site, Template } from '../types'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
 const props = defineProps<{ sites: Site[]; templates: Template[]; accounts: Account[] }>()
-const emit = defineEmits<{ refresh: []; notify: [string] }>()
+const emit = defineEmits<{ notify: [string] }>()
 const form = ref<Site | null>(null),
   isNew = ref(false),
   busy = ref(false),
@@ -82,7 +82,6 @@ async function save() {
       form.value,
     )
     form.value = null
-    emit('refresh')
     emit('notify', '站点已保存')
   } catch (e) {
     error.value = (e as Error).message
@@ -96,7 +95,6 @@ async function remove() {
   try {
     await request('/sites/' + deleting.value.id, 'DELETE')
     deleting.value = null
-    emit('refresh')
   } catch (e) {
     error.value = (e as Error).message
     deleting.value = null

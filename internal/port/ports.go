@@ -39,6 +39,12 @@ type SessionFactory interface {
 	Open(context.Context, domain.Site, domain.Credentials) (Session, error)
 }
 
+// PageSession optionally distinguishes an existing actionable page from an
+// explicit login form. Its probe is read-only and never submits credentials.
+type PageSession interface {
+	PreparePageCheckIn(context.Context) (bool, error)
+}
+
 type Executor interface {
 	Execute(context.Context, domain.Site, domain.Credentials) (domain.Result, *domain.Credentials)
 }
@@ -50,6 +56,10 @@ type Capacity struct {
 	Changed           <-chan struct{}
 }
 type CapacitySource interface{ Capacity() Capacity }
+
+// QueueRevisionSource reports committed implicit reschedules during Claim.
+// It lets the engine re-arm timers without storage callbacks or idle polling.
+type QueueRevisionSource interface{ QueueRevision() uint64 }
 
 type Interaction struct {
 	Type   string  `json:"type"`

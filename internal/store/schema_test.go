@@ -49,3 +49,15 @@ func TestNewDatabaseIndexesAndReopen(t *testing.T) {
 		t.Fatal("reopening lost credentials", err)
 	}
 }
+
+func TestHistoryFiltersUseTheirOrderingIndexes(t *testing.T) {
+	s, _, _ := testStore(t)
+	for _, tc := range []struct{ column, index string }{{"status", "run_status_history"}, {"action", "run_action_history"}} {
+		var id, parent, unused int
+		var detail string
+		query := fmt.Sprintf("EXPLAIN QUERY PLAN SELECT id FROM runs WHERE %s=? ORDER BY created_at DESC,id DESC LIMIT 30", tc.column)
+		if err := s.db.QueryRow(query, "fixture").Scan(&id, &parent, &unused, &detail); err != nil || !strings.Contains(detail, tc.index) {
+			t.Fatal("history filter scans unrelated rows", detail, err)
+		}
+	}
+}

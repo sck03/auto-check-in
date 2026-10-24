@@ -135,8 +135,8 @@ func (s *Service) RunAccounts(ctx context.Context, ids []string, retry bool) ([]
 			}
 		}
 	}
-	if len(ids) > 10000 {
-		return nil, fmt.Errorf("单次最多执行 10000 个账号")
+	if len(ids) > domain.MaxAccounts {
+		return nil, fmt.Errorf("单次最多执行 %d 个账号", domain.MaxAccounts)
 	}
 	results := []EnqueueResult{}
 	seen := map[string]bool{}
@@ -160,8 +160,16 @@ func (s *Service) RunAccounts(ctx context.Context, ids []string, retry bool) ([]
 	return results, nil
 }
 func (s *Service) Export(ctx context.Context, password string) ([]byte, error) {
+	if err := security.ValidateBackupPassword(password); err != nil {
+		return nil, err
+	}
 	b, err := s.Repo.Export(ctx)
 	if err != nil {
+		return nil, err
+	}
+	// Export and restore use the same validation contract. Never promise a usable
+	// backup for legacy data that cannot be accepted by the restore path.
+	if err = s.validateBackup(&b); err != nil {
 		return nil, err
 	}
 	plain, err := json.Marshal(b)
@@ -188,8 +196,11 @@ func (s *Service) Restore(ctx context.Context, archive []byte, password string) 
 	return err
 }
 func (s *Service) validateBackup(b *domain.Backup) error {
-	if b.Version != 1 || len(b.Sites) > 1000 || len(b.Accounts) > 10000 || len(b.Runs) > 100000 {
-		return fmt.Errorf("备份版本或记录数量不受支持")
+	if b.Version != domain.BackupVersion {
+		return fmt.Errorf("备份版本不受支持")
+	}
+	if err := domain.ValidateBackupCounts(len(b.Sites), len(b.Accounts), len(b.Runs)); err != nil {
+		return err
 	}
 	if err := b.Settings.Validate(); err != nil {
 		return err

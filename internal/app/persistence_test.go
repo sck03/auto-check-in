@@ -50,6 +50,21 @@ func TestResultFallbackUsesFreshDeadline(t *testing.T) {
 	})
 }
 
+func TestResultFallbackAndRecoveryKeepKnownServerCooldown(t *testing.T) {
+	for _, failures := range []int{1, 2} {
+		repo := &failingResultRepository{fail: failures}
+		e := NewEngine(repo, nil)
+		at := time.Now()
+		e.finishResult(pendingResult{id: "rate-limited", result: domain.Result{Status: domain.Failed, Retryable: true, RetryAfterSeconds: domain.MaxRetryAfterSeconds}, at: at})
+		if failures == 2 {
+			e.retryPending(context.Background())
+		}
+		if repo.saved.Status != domain.Unverified || repo.saved.RetryAfterSeconds != domain.MaxRetryAfterSeconds || !repo.savedAt.Equal(at) || e.Stats().PendingResults != 0 {
+			t.Fatal("local write recovery discarded the server deadline", failures, repo.saved, e.Stats())
+		}
+	}
+}
+
 func TestFailedResultRecoversWithoutRestartOrSiteReplay(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		repo := &failingResultRepository{fail: 2}

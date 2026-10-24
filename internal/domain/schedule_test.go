@@ -90,3 +90,17 @@ func TestSiteRejectsCredentialRedirects(t *testing.T) {
 		}
 	}
 }
+
+func TestScheduleProjectsCooldownIntoFirstWindow(t *testing.T) {
+	s := DefaultSchedule()
+	for _, at := range []string{"2026-10-15T23:00:00Z", "2026-10-16T00:50:00Z", "2026-10-16T01:00:00Z", "2026-10-16T15:30:00Z"} {
+		bound := instant(at)
+		next := s.AtOrAfter(bound, "account")
+		if next.Before(bound) || !s.WithinWindow(next) {
+			t.Fatal(at, next)
+		}
+		if s.WithinWindow(bound) && !next.Before(s.ScheduledTime(bound, "account")) && next.Sub(bound) >= time.Hour {
+			t.Fatal("skipped a usable window", at, next)
+		}
+	}
+}

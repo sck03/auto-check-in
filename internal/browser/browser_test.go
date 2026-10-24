@@ -28,7 +28,12 @@ func TestDelayedPasswordFormAndSavedSession(t *testing.T) {
 	fixture := testsite.New()
 	defer fixture.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/login" {
+		if r.URL.Path == "/login" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, `<button onclick="location.href='/email-login'">使用邮箱登录</button>`)
+			return
+		}
+		if r.URL.Path != "/email-login" {
 			fixture.Server.Config.Handler.ServeHTTP(w, r)
 			return
 		}

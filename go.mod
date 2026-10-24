@@ -8,7 +8,7 @@ require (
 	github.com/chromedp/cdproto v0.157.8
 	github.com/chromedp/chromedp v0.21.0
 	github.com/energye/systray v1.0.3
-	golang.org/x/net v0.56.0
+	golang.org/x/net v0.60.0
 	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.60.1
 )

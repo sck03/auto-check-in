@@ -56,7 +56,7 @@ func (e *Engine) finishResult(p pendingResult) {
 		slog.Error("task result could not be saved", "run_id", p.id, "error", err)
 	}
 	p.credentials = nil
-	p.result = domain.Result{Status: domain.Unverified, Message: "执行结束，但会话或结果保存失败；请核对站点结果", Evidence: "persistence_error"}
+	p.result = domain.Result{Status: domain.Unverified, Message: "执行结束，但会话或结果保存失败；请核对站点结果", Evidence: "persistence_error", RetryAfterSeconds: p.result.RetryAfterSeconds}
 	// The fallback has its own deadline, independent of the first failed write.
 	if err := e.writeResult(context.Background(), p); err == nil {
 		return

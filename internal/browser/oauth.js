@@ -1,4 +1,5 @@
 (selectors, method, origin, loginPath, waitForStatus = false) => {
+	const loginPage = new URL(loginPath, origin).pathname.replace(/\/$/, '');
   const controls = 'button,a,[role="button"],input[type="submit"]';
   const visible = el => !el.closest('[hidden],[inert],[aria-hidden="true"]') &&
     el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true});
@@ -58,8 +59,8 @@
   const inspect = kind => {
     if (method !== 'github' && method !== 'linuxdo') return 'unsupported';
     if (kind === 'entry' && location.href === 'about:blank') return '';
-    if (kind === 'entry' && (location.origin !== origin || location.pathname.replace(/\/$/, '') !== loginPath.replace(/\/$/, ''))) return 'left';
-    if (kind === 'consent' && location.origin === origin && location.pathname.replace(/\/$/, '') !== loginPath.replace(/\/$/, '')) return 'returned';
+    if (kind === 'entry' && (location.origin !== origin || location.pathname.replace(/\/$/, '') !== loginPage)) return 'left';
+    if (kind === 'consent' && location.origin === origin && location.pathname.replace(/\/$/, '') !== loginPage) return 'returned';
     try {
       const matches = kind === 'entry' ? entry() : consent();
       return matches.length > 1 ? 'ambiguous' : matches.length === 1 ? 'ready' : '';

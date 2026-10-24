@@ -5,7 +5,7 @@ import type { Meta, Settings } from '../types'
 import Icon from '../components/Icon.vue'
 import DesktopSettings from '../components/DesktopSettings.vue'
 const props = defineProps<{ settings: Settings; meta: Meta; accountCount: number }>()
-const emit = defineEmits<{ refresh: []; notify: [string]; logout: [] }>()
+const emit = defineEmits<{ notify: [string]; logout: [] }>()
 const form = ref({ ...props.settings }),
   dirty = ref(false),
   busy = ref(false),
@@ -30,7 +30,6 @@ async function save() {
   try {
     form.value = await request<Settings>('/settings', 'PUT', form.value)
     dirty.value = false
-    emit('refresh')
     emit('notify', '设置已保存')
   } catch (e) {
     error.value = (e as Error).message
@@ -63,7 +62,6 @@ async function restore() {
     })
     file.value = null
     password.value = ''
-    emit('refresh')
     emit('notify', '备份已恢复，自动计划处于暂停状态，请检查后启用')
   } catch (e) {
     error.value = (e as Error).message

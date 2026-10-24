@@ -12,15 +12,17 @@ import (
 	"auto-check-in/internal/domain"
 )
 
-const accountSelect = `SELECT a.id,a.site_id,a.name,a.enabled,a.schedule,a.auth,a.version,a.created_at,a.updated_at,a.next_run_at,a.last_run_at,a.last_success_at,a.last_status,a.last_message,
-COALESCE(r.id,''),COALESCE(r.status,'')
-FROM accounts a LEFT JOIN runs r ON r.account_id=a.id AND r.status IN ('queued','running','waiting_user')`
+const accountColumns = `a.id,a.site_id,a.name,a.enabled,a.schedule,a.auth,a.version,a.created_at,a.updated_at,a.next_run_at,a.last_run_at,a.last_success_at,a.last_status,a.last_message,
+COALESCE(r.id,''),COALESCE(r.status,''),a.retry_not_before`
+const accountFrom = ` FROM accounts a LEFT JOIN runs r ON r.account_id=a.id AND r.status IN ('queued','running','waiting_user')`
+const accountSelect = `SELECT ` + accountColumns + accountFrom
 
-func scanAccount(row scanner) (domain.Account, error) {
+func scanAccount(row scanner, extra ...any) (domain.Account, error) {
 	var a domain.Account
 	var schedule, auth string
-	var created, updated, next, last, success int64
-	err := row.Scan(&a.ID, &a.SiteID, &a.Name, &a.Enabled, &schedule, &auth, &a.Version, &created, &updated, &next, &last, &success, &a.LastStatus, &a.LastMessage, &a.ActiveRunID, &a.ActiveStatus)
+	var created, updated, next, last, success, cooldown int64
+	args := []any{&a.ID, &a.SiteID, &a.Name, &a.Enabled, &schedule, &auth, &a.Version, &created, &updated, &next, &last, &success, &a.LastStatus, &a.LastMessage, &a.ActiveRunID, &a.ActiveStatus, &cooldown}
+	err := row.Scan(append(args, extra...)...)
 	if err != nil {
 		return a, mapError(err)
 	}
@@ -35,6 +37,7 @@ func scanAccount(row scanner) (domain.Account, error) {
 	a.NextRunAt = fromMillis(next)
 	a.LastRunAt = fromMillis(last)
 	a.LastSuccessAt = fromMillis(success)
+	a.RetryNotBefore = fromMillis(cooldown)
 	return a, nil
 }
 func getAccount(ctx context.Context, q queryer, id string) (domain.Account, error) {
@@ -68,6 +71,11 @@ func (s *Store) credentials(ctx context.Context, q queryer, id string) (domain.C
 	if err := q.QueryRowContext(ctx, "SELECT secret FROM accounts WHERE id=?", id).Scan(&sealed); err != nil {
 		return c, mapError(err)
 	}
+	return s.decodeCredentials(sealed, id)
+}
+
+func (s *Store) decodeCredentials(sealed []byte, id string) (domain.Credentials, error) {
+	var c domain.Credentials
 	plain, err := s.vault.Open(sealed, "account:"+id)
 	if err != nil {
 		return c, err
@@ -139,6 +147,13 @@ func (s *Store) SaveAccount(ctx context.Context, a domain.Account, c domain.Cred
 		if a.Version != 0 {
 			return a, domain.ErrConflict
 		}
+		var count int
+		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM accounts").Scan(&count); err != nil {
+			return a, err
+		}
+		if err = domain.ValidateBackupCounts(0, count+1, 0); err != nil {
+			return a, err
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO accounts(id,site_id,name,enabled,schedule,auth,secret,identity,version,created_at,updated_at,next_run_at)
 VALUES(?,?,?,?,?,?,?,?,1,?,?,?)`, a.ID, a.SiteID, a.Name, a.Enabled, jsonText(a.Schedule), jsonText(c.Summary()), sealed, identity(c), millis(now), millis(now), millis(next))
 	} else if err == nil {
@@ -168,6 +183,10 @@ VALUES(?,?,?,?,?,?,?,?,1,?,?,?)`, a.ID, a.SiteID, a.Name, a.Enabled, jsonText(a.
 		if credentialsChanged && status == domain.NeedsAttention {
 			status = "ready"
 			message = ""
+		}
+		if nextMillis > 0 {
+			a.RetryNotBefore = old.RetryNotBefore
+			nextMillis = millis(a.RespectCooldown(time.UnixMilli(nextMillis)))
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE accounts SET name=?,enabled=?,schedule=?,auth=?,secret=?,identity=?,version=version+1,updated_at=?,next_run_at=?,last_status=?,last_message=? WHERE id=?`,
 			a.Name, a.Enabled, jsonText(a.Schedule), jsonText(c.Summary()), sealed, identity(c), millis(now), nextMillis, status, message, a.ID)

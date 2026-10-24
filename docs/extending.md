@@ -22,7 +22,7 @@
 
 这个片段说明关键字段；完整创建请求应以 `GET /api/v1/templates` 返回的 `site` 为基底。不需要改动调度和数据库。不同衍生站可能使用不同协议：AnyRouter 通过访问已登录页面签到，AgentRouter 通过重新登录签到，两者均不调用签到接口。
 
-HTTP 模式使用独立 Cookie jar，浏览器模式在当前账号的隔离上下文里执行同源请求。如果目标站点需要正常浏览器会话，可以选择浏览器模式；这不保证验证码或风控自动通过。
+HTTP 模式使用独立 Cookie jar，生产入口通过 `transport.NewFactory` 共享有界连接池，退出时由 bootstrap 关闭。不要将凭据或 Cookie jar 放入共享 Transport。浏览器模式在当前账号的隔离上下文里执行同源请求；验证码和风控仍由站点决定。
 
 ## 页面流程
 
@@ -58,6 +58,8 @@ HTTP 模式使用独立 Cookie jar，浏览器模式在当前账号的隔离上�
 
 实现 `port.SessionFactory`、`port.Session`，需要人工操作时再实现 `port.BrowserFactory` / `port.InteractiveSession`。浏览器驱动负责进程、上下文、Cookie 域和生命周期，平台适配器只看到协议接口。
 
+网页会话可实现可选的 `port.PageSession.PreparePageCheckIn`：只读识别可操作的签到状态或明确登录表单，返回是否能复用当前页面。无法确认应返回错误，不因缺少按钮、维护页或错误选择器提交密码。已准备页面仍会在点击前复核状态和已绑定用户 ID；响应丢失不重放点击。扩展能力不强迫 HTTP 驱动依赖 DOM。
+
 当前 chromedp 0.21 使用泛型动作与默认管道传输。项目在 `internal/browser/cdp.go` 集中处理动作调用、JSON 解码与操作取消。显式调试端口必须配套 `remote.WebSocket`，不要把测试连接配置复制为生产开放端口。
 
 ## 调度与存储实现
@@ -67,3 +69,7 @@ HTTP 模式使用独立 Cookie jar，浏览器模式在当前账号的隔离上�
 会话驱动需遵守 1 MiB 响应读取上限、2 MiB 会话数据及 2048 个存储项预算；流式读取应在超限时取消。超限的已提交操作仍返回不确定结果。通过 `transport.ParseRetryAfter` 统一解析限流截止时间，不在各驱动内维护另一套规则。接口状态读取失败不能简化为“未签到”，也不能从错误提示中的签到词片段确认完成。
 
 `Finish` / `FinishLogin` 对已经提交的终态幂等。应用层结果恢复只重新提交本地结束记录，不允许再次调用站点。不要按简单“运行时间过长”规则抢回尚在执行的任务，以免旧执行与重试同时产生站点副作用。
+
+`domain/limits.go` 集中维护创建、备份和 Retry-After 预算；变更容量策略时同步前端提示及契约测试。`store/schema.go` 管理事务建库和 v5 升级，`store/planning.go` 管理补签和冷却落点，API 与前端不得自行计算另一套重试截止。替换仓库必须在入队、领取及重排时保留 `Account.RetryNotBefore`。
+
+若 `Claim` 会隐式取消过期队列并更新计划，应实现可选 `port.QueueRevisionSource`，只在相关事务提交后增加代次。执行器比较领取前后的代次并广播唤醒，避免计划已经提前到当日而调度器仍等待旧定时器。

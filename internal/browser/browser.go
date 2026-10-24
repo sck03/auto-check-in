@@ -112,6 +112,7 @@ type Session struct {
 	site           domain.Site
 	creds          domain.Credentials
 	browserToken   bool
+	pagePrepared   bool
 	loginResponses chan port.Response
 	confirmedUser  atomic.Pointer[string]
 }
@@ -303,6 +304,7 @@ func (s *Session) restore(ctx context.Context) (page.ScriptIdentifier, error) {
 }
 
 func (s *Session) listenLoginResponses(tab context.Context) {
+	loginAPI, _ := url.Parse(s.site.LoginAPIPath)
 	events := chromedp.Events(tab, network.ResponseReceived)
 	go func() {
 		for ev, err := range events {
@@ -317,7 +319,7 @@ func (s *Session) listenLoginResponses(tab context.Context) {
 			if u.Scheme != base.Scheme || u.Host != base.Host {
 				continue
 			}
-			if u.Path != s.site.LoginAPIPath && u.Path != "/api/oauth/github" && u.Path != "/api/oauth/linuxdo" {
+			if u.Path != loginAPI.Path && u.Path != "/api/oauth/github" && u.Path != "/api/oauth/linuxdo" {
 				continue
 			}
 			go func(id network.RequestID, status int) {

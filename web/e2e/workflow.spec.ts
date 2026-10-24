@@ -407,7 +407,10 @@ test('手动执行失败显示具体原因和处理建议', async ({ page }) => 
   })
   await page.getByRole('button', { name: '刷新数据' }).click()
   await page.getByRole('button', { name: '签到 错误密码', exact: true }).click()
-  await expect(page.getByText('需要处理', { exact: true }).first()).toBeVisible()
+  const row = page
+    .locator('.account-table tbody tr')
+    .filter({ has: page.getByText('错误密码', { exact: true }) })
+  await expect(row.getByText('需要处理', { exact: true })).toBeVisible()
   await selectNav(page, '执行记录')
   await page.getByRole('button', { name: '查看记录 错误密码' }).click()
   const dialog = page.getByRole('dialog')
@@ -452,6 +455,40 @@ test('访问保护、加密备份和空白实例恢复', async ({ page }) => {
   })
   expect((await api('/accounts'))[0].auth.has_session).toBe(true)
   expect((await api('/settings')).scheduler_enabled).toBe(false)
+  expect(errors).toEqual([])
+})
+
+test('离开账号页后完成的执行请求仍刷新记录和详情', async ({ page }) => {
+  await seedAccount('late-request-user')
+  await page.getByRole('button', { name: '刷新数据' }).click()
+  let release = () => {}
+  let capture = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    capture = resolve
+  })
+  await page.route('**/api/v1/runs', async (route) => {
+    if (route.request().method() === 'POST') {
+      capture()
+      await gate
+    }
+    await route.continue()
+  })
+  try {
+    await page.getByRole('button', { name: '签到 late-request-user', exact: true }).click()
+    await started
+    await selectNav(page, '执行记录')
+    await expect(page.getByRole('button', { name: '查看记录 late-request-user' })).toHaveCount(0)
+    release()
+    await page.getByRole('button', { name: '查看记录 late-request-user' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('签到成功', { exact: true })).toBeVisible()
+    expect(calls.get('late-request-user')).toBe(1)
+  } finally {
+    release()
+  }
   expect(errors).toEqual([])
 })
 
@@ -804,10 +841,17 @@ test('保存设置期间锁定表单，响应后可继续编辑并保存', async
   await field.fill('360')
   let release = () => {}
   let capture = () => {}
-  const gate = new Promise<void>((resolve) => { release = resolve })
-  const started = new Promise<void>((resolve) => { capture = resolve })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    capture = resolve
+  })
   await page.route('**/api/v1/settings', async (route) => {
-    if (route.request().method() === 'PUT') { capture(); await gate }
+    if (route.request().method() === 'PUT') {
+      capture()
+      await gate
+    }
     await route.continue()
   })
   try {
@@ -822,16 +866,41 @@ test('保存设置期间锁定表单，响应后可继续编辑并保存', async
     await page.getByRole('button', { name: '保存设置', exact: true }).click()
     await expect(field).toBeEnabled()
     expect((await api('/settings')).retry_base_seconds).toBe(480)
-  } finally { release() }
+  } finally {
+    release()
+  }
 })
 
 test('大量账号分页限制 DOM 数量，筛选会回到第一页', async ({ page }) => {
   const list = Array.from({ length: 1000 }, (_, i) => ({
-    id: 'fixture-' + i, site_id: 'anyrouter', name: '分页账号' + String(i).padStart(4, '0'),
-    enabled: true, schedule: { timezone: 'Asia/Shanghai', window_start: '08:00', window_end: '09:00', retry_until: '09:00' },
-    auth: { method: 'cookie', username: '', api_user: '', has_password: false, has_session: true, has_token: false },
-    version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-    next_run_at: null, last_run_at: null, last_success_at: null, last_status: 'ready', last_message: '', active_run_id: '', active_status: '',
+    id: 'fixture-' + i,
+    site_id: 'anyrouter',
+    name: '分页账号' + String(i).padStart(4, '0'),
+    enabled: true,
+    schedule: {
+      timezone: 'Asia/Shanghai',
+      window_start: '08:00',
+      window_end: '09:00',
+      retry_until: '09:00',
+    },
+    auth: {
+      method: 'cookie',
+      username: '',
+      api_user: '',
+      has_password: false,
+      has_session: true,
+      has_token: false,
+    },
+    version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    next_run_at: null,
+    last_run_at: null,
+    last_success_at: null,
+    last_status: 'ready',
+    last_message: '',
+    active_run_id: '',
+    active_status: '',
   }))
   await page.route('**/api/v1/accounts', (route) => route.fulfill({ json: list }))
   await page.getByRole('button', { name: '刷新数据' }).click()
@@ -849,16 +918,37 @@ test('大量账号分页限制 DOM 数量，筛选会回到第一页', async ({ 
 test('离开账号页后结束迟到的登录会话', async ({ page }) => {
   const templates = await api('/templates')
   const schedule = templates[0].schedule
-  const account = await api('/accounts', 'POST', { name: '迟到登录', site_id: 'anyrouter', enabled: true, version: 0, schedule, credentials: { method: 'cookie' } })
+  const account = await api('/accounts', 'POST', {
+    name: '迟到登录',
+    site_id: 'anyrouter',
+    enabled: true,
+    version: 0,
+    schedule,
+    credentials: { method: 'cookie' },
+  })
   await page.getByRole('button', { name: '刷新数据' }).click()
   let release = () => {}
   let capture = () => {}
   let cancelled = 0
-  const gate = new Promise<void>((resolve) => { release = resolve })
-  const started = new Promise<void>((resolve) => { capture = resolve })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    capture = resolve
+  })
   await page.route('**/api/v1/accounts/' + account.id + '/login', async (route) => {
-    capture(); await gate
-    await route.fulfill({ status: 201, json: { id: 'late-fixture', account_id: account.id, width: 1200, height: 800, expires_at: new Date(Date.now() + 600000).toISOString() } })
+    capture()
+    await gate
+    await route.fulfill({
+      status: 201,
+      json: {
+        id: 'late-fixture',
+        account_id: account.id,
+        width: 1200,
+        height: 800,
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+      },
+    })
   })
   await page.route('**/api/v1/sessions/late-fixture', async (route) => {
     if (route.request().method() === 'DELETE') cancelled++
@@ -871,7 +961,9 @@ test('离开账号页后结束迟到的登录会话', async ({ page }) => {
     release()
     await expect.poll(() => cancelled).toBe(1)
     await expect(page.getByRole('dialog')).toHaveCount(0)
-  } finally { release() }
+  } finally {
+    release()
+  }
 })
 
 test('退出管理界面后丢弃迟到的刷新响应', async ({ page }) => {

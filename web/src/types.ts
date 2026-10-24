@@ -52,6 +52,7 @@ export interface Account {
   created_at: string
   updated_at: string
   next_run_at: string | null
+  retry_not_before?: string | null
   last_run_at: string | null
   last_success_at: string | null
   last_status: string

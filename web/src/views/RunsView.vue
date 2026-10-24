@@ -7,7 +7,6 @@ import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 const props = defineProps<{ accounts: Account[]; revision: number }>()
-const emit = defineEmits<{ refresh: [] }>()
 const page = ref<RunPage>({ items: [], total: 0 })
 const account = ref(''),
   status = ref(''),
@@ -57,7 +56,6 @@ async function load() {
 async function cancel(run: Run) {
   try {
     await request('/runs/' + run.id, 'DELETE')
-    emit('refresh')
   } catch (e) {
     error.value = (e as Error).message
   }
@@ -112,6 +110,7 @@ const evidence: Record<string, string> = {
   cancelled_context: '任务被中断',
   before_reset: '尚未到每日 08:00',
   schedule_deferred: '计划已过期，已安排下次执行',
+  rate_limit_deferred: '站点冷却时间尚未结束，已延后计划',
   login_required: '此站需要重新登录',
 }
 const stages: Record<string, string> = {

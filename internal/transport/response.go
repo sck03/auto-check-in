@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"auto-check-in/internal/domain"
 	"math"
 	"net/http"
 	"strconv"
@@ -16,10 +17,10 @@ func ParseRetryAfter(value string, now time.Time) int {
 	value = strings.TrimSpace(value)
 	seconds, err := strconv.ParseUint(value, 10, 64)
 	if err == nil {
-		return int(min(seconds, 86400))
+		return int(min(seconds, domain.MaxRetryAfterSeconds))
 	}
 	if deadline, err := http.ParseTime(value); err == nil {
-		return int(max(0, min(86400, math.Ceil(deadline.Sub(now).Seconds()))))
+		return int(max(0, min(domain.MaxRetryAfterSeconds, math.Ceil(deadline.Sub(now).Seconds()))))
 	}
 	return 0
 }
